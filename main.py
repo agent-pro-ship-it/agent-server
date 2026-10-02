@@ -169,7 +169,10 @@ Return ONLY valid JSON.
                     try:
                         rest_url = f"https://generativelanguage.googleapis.com/v1beta/models/{target_model}:generateContent?key={api_key}"
                         rest_payload = {
-                            "contents": [{"parts": [{"text": prompt}]}]
+                            "contents": [{"parts": [{"text": prompt}]}],
+                            "generationConfig": {
+                                "response_mime_type": "application/json"
+                            }
                         }
                         r = http_client.post(rest_url, json=rest_payload)
                         if r.status_code == 200:
@@ -185,11 +188,17 @@ Return ONLY valid JSON.
             if not raw:
                 raise RuntimeError("Failed to generate response across all models.")
 
-            if raw.startswith("```json"):
-                raw = raw[7:]
-            if raw.endswith("```"):
-                raw = raw[:-3]
-            data = json.loads(raw.strip())
+            import re
+            raw_clean = raw.strip()
+            if raw_clean.startswith("```"):
+                raw_clean = re.sub(r"^```(?:json)?\s*", "", raw_clean)
+                raw_clean = re.sub(r"\s*```$", "", raw_clean)
+
+            match = re.search(r"\{.*\}", raw_clean, re.DOTALL)
+            if match:
+                data = json.loads(match.group(0))
+            else:
+                data = json.loads(raw_clean)
 
             script = data.get("script", "")
             res = subprocess.run(
