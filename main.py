@@ -160,9 +160,15 @@ Respond in JSON format:
 }}
 Return ONLY valid JSON.
 """
-            # Call Gemini 3.8 Flash model
+            # Call Gemini models with auto-failover
             raw = None
-            models_to_try = ["gemini-3.8-flash", "gemini-flash-latest", "gemma-4-26b-a4b-it"]
+            models_to_try = [
+                "gemini-3.8-flash",
+                "gemini-3.6-flash",
+                "gemini-3.5-flash",
+                "gemini-flash-latest",
+                "gemini-3.1-flash-lite"
+            ]
             import httpx
             with httpx.Client(timeout=60.0) as http_client:
                 for target_model in models_to_try:
