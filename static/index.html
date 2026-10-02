@@ -1,139 +1,279 @@
 <!DOCTYPE html>
-<html lang=ru>
+<html lang="ru">
 <head>
-  <meta charset=UTF-8>
-  <meta name=viewport content=width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover>
-  <title>Apple AI Agent</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>Google Antigravity Cloud</title>
   <link rel="manifest" href="manifest.json">
   <link rel="stylesheet" href="style.css">
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <meta name="theme-color" content="#000000">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="theme-color" content="#ffffff">
 </head>
 <body>
 
-  <!-- Header -->
-  <header class=header-glass>
-    <div style=display: flex; align-items: center; gap: 8px;>
-      <span style=font-size: 18px; font-weight: 700; letter-spacing: -0.5px;>Agent</span>
-      <div id=statusDot style=width: 8px; height: 8px; border-radius: 50%; background: #30d158; title=Connected></div>
+  <!-- App Layout -->
+  <div class="app-layout">
+
+    <!-- Top Window Menu Bar (Antigravity Style) -->
+    <header class="window-header">
+      <div class="window-left">
+        <div class="window-nav">
+          <button class="nav-btn" id="btnNavBack" title="Назад">←</button>
+          <button class="nav-btn" id="btnNavForward" title="Вперед">→</button>
+          <button class="nav-btn" id="btnToggleSidebar" title="Переключить боковую панель">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+              <line x1="9" y1="3" x2="9" y2="21"></line>
+            </svg>
+          </button>
+        </div>
+        <div class="window-menus">
+          <span class="menu-item bold-title">Antigravity</span>
+          <span class="menu-item">File</span>
+          <span class="menu-item">View</span>
+          <span class="menu-item">Window</span>
+        </div>
+      </div>
+
+      <div class="window-right">
+        <div class="auth-badge" id="googleProBadge" title="Google Pro Подключен">
+          <span class="pulse-dot"></span>
+          <span class="badge-text" id="badgeAccount">recruiterclub.bot@gmail.com</span>
+        </div>
+        <div class="window-controls">
+          <button class="win-btn" title="Свернуть">—</button>
+          <button class="win-btn" title="Развернуть">▢</button>
+          <button class="win-btn close" title="Закрыть">✕</button>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Workspace (Sidebar + Chat Area) -->
+    <div class="workspace-body">
+
+      <!-- Left Sidebar Backdrop for Mobile -->
+      <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
+
+      <!-- Left Sidebar -->
+      <aside class="sidebar" id="sidebar">
+        <div class="sidebar-top">
+          <button class="btn-new-chat" id="btnNewChat">
+            <span class="plus-icon">+</span>
+            <span>New Conversation</span>
+          </button>
+
+          <nav class="sidebar-nav">
+            <a href="#" class="nav-link" id="btnHistory">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 14 14"></polyline></svg>
+              <span>Conversation History</span>
+            </a>
+            <a href="#" class="nav-link" id="btnScheduled">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 16 14"></polyline></svg>
+              <span>Scheduled Tasks</span>
+            </a>
+          </nav>
+
+          <div class="projects-header">
+            <span class="projects-title">Projects</span>
+            <div class="projects-actions">
+              <button class="icon-btn" id="btnSortProjects" title="Сортировка">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="4" y1="6" x2="20" y2="6"></line><line x1="7" y1="12" x2="17" y2="12"></line><line x1="10" y1="18" x2="14" y2="18"></line></svg>
+              </button>
+              <button class="icon-btn" id="btnRefreshProjects" title="Обновить проекты">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Scrollable Projects List matching the screenshot -->
+        <div class="projects-list" id="projectsList"></div>
+
+        <!-- Sidebar Footer -->
+        <div class="sidebar-footer">
+          <button class="footer-btn" id="btnOpenSettings">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+            <span>Settings</span>
+          </button>
+        </div>
+      </aside>
+
+      <!-- Main Chat Container -->
+      <main class="main-content">
+
+        <!-- Top Breadcrumb & Actions Bar -->
+        <div class="content-toolbar">
+          <div class="breadcrumbs">
+            <span class="crumb-project" id="crumbProject">Агент</span>
+            <span class="crumb-sep">/</span>
+            <span class="crumb-task" id="crumbTask">Бесплатный Сервер Для Антигравити</span>
+          </div>
+
+          <div class="toolbar-actions">
+            <button class="btn-action-primary" id="btnRestartUpdate" title="Перезапустить / синхронизировать">
+              <span>Restart to Update →</span>
+            </button>
+            <button class="btn-action-icon" id="btnToolbarMenu" title="Меню">⋮</button>
+            <button class="btn-action-outline" id="btnOpenTerminal" title="Открыть Терминал сервера">
+              <span class="ide-logo">A</span>
+              <span>Install IDE / Terminal</span>
+            </button>
+            <button class="btn-action-icon" id="btnToggleLayout" title="Раскладка">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="15" y1="3" x2="15" y2="21"></line></svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- Scrollable Conversation Feed -->
+        <div class="chat-feed" id="chatFeed"></div>
+
+        <!-- Floating Antigravity Input Box -->
+        <div class="chat-input-wrapper">
+          <div class="input-card">
+            <textarea
+              class="task-textarea"
+              id="taskInput"
+              rows="1"
+              placeholder="Теперь сделай мне полноценный интерфейс на GitHub..."
+              autocomplete="off"
+            ></textarea>
+
+            <div class="input-bottom-bar">
+              <div class="input-tools-left">
+                <button class="tool-btn-icon" id="btnAttach" title="Прикрепить файл или команду">+</button>
+                <div class="model-pill" id="btnSelectModel">
+                  <span class="sparkle-icon">✦</span>
+                  <span id="currentModelName">Gemini 3.8 Flash Medium</span>
+                  <span class="caret-icon">^</span>
+                </div>
+              </div>
+
+              <div class="input-tools-right">
+                <!-- Red Voice Recording Circle -->
+                <button class="btn-circle-mic" id="btnMic" title="Голосовой ввод">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="8" y1="12" x2="8" y2="12"></line>
+                    <line x1="12" y1="9" x2="12" y2="15"></line>
+                    <line x1="16" y1="11" x2="16" y2="13"></line>
+                    <line x1="4" y1="10" x2="4" y2="14"></line>
+                    <line x1="20" y1="10" x2="20" y2="14"></line>
+                  </svg>
+                </button>
+
+                <!-- Blue Arrow Send Circle -->
+                <button class="btn-circle-send" id="btnSend" title="Отправить задачу">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="5" y1="12" x2="19" y2="12"></line>
+                    <polyline points="12 5 19 12 12 19"></polyline>
+                  </svg>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </main>
     </div>
-
-    <div style=display: flex; align-items: center; gap: 8px;>
-      <button class="apple-pill" id="btnGoogleAuth" style="background: rgba(255,255,255,0.12);">
-        <svg width="14" height="14" viewBox="0 0 24 24"><path fill="#EA4335" d="M12 5c1.6 0 3 .6 4.1 1.7l3.1-3.1C17.3 1.8 14.8 1 12 1 7.5 1 3.7 3.6 1.9 7.3l3.7 2.9C6.5 7.4 9 5 12 5z"/><path fill="#4285F4" d="M23.5 12.3c0-.8-.1-1.7-.2-2.3H12v4.6h6.5c-.3 1.5-1.1 2.8-2.4 3.7l3.7 2.9c2.2-2 3.7-5 3.7-8.9z"/><path fill="#FBBC05" d="M5.6 14.8c-.2-.7-.4-1.5-.4-2.8s.2-2.1.4-2.8L1.9 6.3C.7 8.7 0 10.3 0 12s.7 3.3 1.9 5.7l3.7-2.9z"/><path fill="#34A853" d="M12 23c3.2 0 6-1.1 8-3l-3.7-2.9c-1.1.7-2.5 1.2-4.3 1.2-3 0-5.5-2-6.4-4.8L1.9 16.4C3.7 20.1 7.5 23 12 23z"/></svg>
-        <span id="userAuthEmail">Войти через Google</span>
-      </button>
-
-      <button class=apple-pill id=btnSkillsModal>
-        <span>⚡ Скиллы</span>
-      </button>
-
-      <button class=apple-pill id=btnStorageModal>
-        <span>☁️ Диск</span>
-      </button>
-
-      <button class=apple-pill id=btnSettingsModal>
-        <span>⚙️</span>
-      </button>
-    </div>
-  </header>
-
-  <!-- Chat Feed -->
-  <main class=chat-container id=chatContainer>
-    <div class=message assistant>
-      Привет! Я ваш автономный AI-агент. Я подключен к вашей подписке с моделями Gemini 3.8, базе Supabase и облачному хранилищу. Готов к работе! Можете писать или нажать на микрофон для голосового диалога.
-    </div>
-  </main>
-
-  <!-- Voice Waveform Indicator -->
-  <div class=waveform-container id=waveform>
-    <div class=wave-bar style=animation-delay: 0.1s;></div>
-    <div class=wave-bar style=animation-delay: 0.2s;></div>
-    <div class=wave-bar style=animation-delay: 0.3s;></div>
-    <div class=wave-bar style=animation-delay: 0.4s;></div>
-    <div class=wave-bar style=animation-delay: 0.5s;></div>
   </div>
 
-  <!-- Bottom Input Dock -->
-  <footer class=input-dock>
-    <div class=input-row>
-      <button class=btn-circle btn-mic id=btnMic title=Голосовой ввод>
-        <svg width=20 height=20 viewBox=0 0 24 24 fill=none stroke=currentColor stroke-width=2 stroke-linecap=round stroke-linejoin=round>
-          <path d=M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z></path>
-          <path d=M19 10v2a7 7 0 0 1-14 0v-2></path>
-          <line x1=12 y1=19 x2=12 y2=22></line>
-        </svg>
-      </button>
-
-      <input type=text class=input-field id=messageInput placeholder=Сообщение или задача... autocomplete=off>
-
-      <button class=btn-circle btn-send id=btnSend title=Отправить>
-        <svg width=18 height=18 viewBox=0 0 24 24 fill=none stroke=currentColor stroke-width=2.5 stroke-linecap=round stroke-linejoin=round>
-          <line x1=22 y1=2 x2=11 y2=13></line>
-          <polygon points=22 2 15 22 11 13 2 9 22 2></polygon>
-        </svg>
-      </button>
-    </div>
-  </footer>
-
-  <!-- Modal: Google Accounts -->
-  <div class=modal-overlay id=modalAccount>
-    <div class=modal-sheet>
-      <div class=sheet-handle></div>
-      <h3 style=font-size: 18px; font-weight: 600;>Управление Google Аккаунтами</h3>
-      <p style=font-size: 13px; color: var(--text-secondary);>
-        При исчерпании лимитов на активном аккаунте агент автоматически переключится на следующий. Вы также можете переключить вручную.
-      </p>
-
-      <div id=accountsList style=display: flex; flex-direction: column; gap: 8px;></div>
-
-      <hr style=border: none; border-top: 1px solid var(--card-border); margin: 6px 0;>
-      
-      <div style=display: flex; flex-direction: column; gap: 8px;>
-        <input type=text id=newAccountName class=input-field placeholder=Название (напр. Вторая почта)>
-        <input type=password id=newAccountKey class=input-field placeholder=API ключ (AIza...) или токен>
-        <button class=apple-pill id=btnAddAccount style=justify-content: center; background: var(--apple-blue); color: #fff; padding: 12px;>+ Добавить аккаунт в пул</button>
+  <!-- Terminal Modal (Interactive Web Terminal) -->
+  <div class="modal-overlay" id="modalTerminal">
+    <div class="modal-container-large">
+      <div class="modal-header">
+        <div style="display:flex; align-items:center; gap:8px;">
+          <span style="font-weight:600;">💻 Cloud Linux Terminal (agy v1.2.14)</span>
+          <span class="badge-online">Render Online</span>
+        </div>
+        <button class="modal-close-btn" id="btnCloseTerminal">✕</button>
+      </div>
+      <div class="modal-body-terminal">
+        <iframe src="https://agent-master-server.onrender.com/terminal/" id="terminalFrame"></iframe>
       </div>
     </div>
   </div>
 
-  <!-- Modal: Skills & Plugins -->
-  <div class=modal-overlay id=modalSkills>
-    <div class=modal-sheet>
-      <div class=sheet-handle></div>
-      <h3 style=font-size: 18px; font-weight: 600;>Навыки и Плагины (Antigravity)</h3>
-      <p style=font-size: 13px; color: var(--text-secondary);>
-        Навыки передаются агенту в системный промпт перед каждой задачей.
-      </p>
-      <div id=skillsList style=display: flex; flex-direction: column; gap: 8px; max-height: 50vh; overflow-y: auto;></div>
+  <!-- Settings Modal -->
+  <div class="modal-overlay" id="modalSettings">
+    <div class="modal-container">
+      <div class="modal-header">
+        <h3>Antigravity Settings</h3>
+        <button class="modal-close-btn" id="btnCloseSettings">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="setting-item">
+          <label>Google Pro Account:</label>
+          <div class="account-card-active">
+            <span class="badge-active-dot"></span>
+            <strong>recruiterclub.bot@gmail.com</strong>
+            <span class="badge-sub">Google Pro Active</span>
+          </div>
+          <p class="setting-hint">Авторизация подтверждена. Доступен Gemini 3.8 Flash (High) с повышенными лимитами подписки.</p>
+        </div>
+
+        <div class="setting-item">
+          <label>Remote Control Dashboard:</label>
+          <a href="https://antigravity.google.com" target="_blank" class="btn-action-primary" style="text-decoration:none; display:inline-flex; width:auto;">
+            Открыть antigravity.google.com ↗
+          </a>
+          <p class="setting-hint">Имя удаленного инстанса на сервере: <code>AgentMasterCloud</code></p>
+        </div>
+
+        <div class="setting-item">
+          <label>Cloud Storage (Storj 25 GB S3):</label>
+          <div class="setting-val" id="storjStatusText">Подключено (Bucket: agent-vault)</div>
+        </div>
+
+        <div class="setting-item">
+          <label>Backend URL (Render):</label>
+          <input type="text" class="setting-input" id="settingServerUrl" value="https://agent-master-server.onrender.com">
+          <button class="btn-action-outline" id="btnSaveServerUrl" style="margin-top:8px;">Сохранить адрес</button>
+        </div>
+      </div>
     </div>
   </div>
 
-  <!-- Modal: Storage -->
-  <div class=modal-overlay id=modalStorage>
-    <div class=modal-sheet>
-      <div class=sheet-handle></div>
-      <h3 style=font-size: 18px; font-weight: 600;>Облачные Хранилища</h3>
-      <p style=font-size: 13px; color: var(--text-secondary);>
-        Файлы распределяются между Supabase Storage (1 ГБ) и Cloudflare R2 (10 ГБ).
-      </p>
-      <div id=storageFilesList style=display: flex; flex-direction: column; gap: 8px; max-height: 45vh; overflow-y: auto;></div>
+  <!-- Model Selection Dropdown -->
+  <div class="dropdown-menu" id="modelDropdown">
+    <div class="dropdown-item active" data-model="Gemini 3.8 Flash Medium">
+      <div class="dd-title">✦ Gemini 3.8 Flash Medium</div>
+      <div class="dd-desc">Оптимальная скорость и рассуждения (Google Pro)</div>
+    </div>
+    <div class="dropdown-item" data-model="Gemini 3.8 Flash (High)">
+      <div class="dd-title">⚡ Gemini 3.8 Flash (High)</div>
+      <div class="dd-desc">Максимальная глубина анализа и кодинга</div>
+    </div>
+    <div class="dropdown-item" data-model="Gemini 3.1 Pro">
+      <div class="dd-title">🧠 Gemini 3.1 Pro</div>
+      <div class="dd-desc">Комплексная архитектура и планирование</div>
+    </div>
+    <div class="dropdown-item" data-model="Direct Bash Engine">
+      <div class="dd-title">💻 Прямой Bash в терминал</div>
+      <div class="dd-desc">Выполнение shell команд на сервере</div>
     </div>
   </div>
 
-  <!-- Modal: Settings -->
-  <div class=modal-overlay id=modalSettings>
-    <div class=modal-sheet>
-      <div class=sheet-handle></div>
-      <h3 style=font-size: 18px; font-weight: 600;>Настройки Сервера</h3>
-      <p style=font-size: 13px; color: var(--text-secondary);>Адрес бэкенда на Render:</p>
-      <input type=text id=serverUrlInput class=input-field placeholder=https://ваш-сервер.onrender.com>
-      <button class=apple-pill id=btnSaveServerUrl style=justify-content: center; background: var(--apple-blue); color: #fff; padding: 12px;>Сохранить адрес</button>
+  <!-- Attach Menu Dropdown -->
+  <div class="dropdown-menu" id="attachDropdown">
+    <div class="dropdown-item" id="actUploadFile">
+      <div class="dd-title">📁 Загрузить файл в Storj 25GB</div>
+      <div class="dd-desc">Сохранить файл в облачное хранилище</div>
+    </div>
+    <div class="dropdown-item" id="actInsertBash">
+      <div class="dd-title">💻 Вставить префикс команды ($)</div>
+      <div class="dd-desc">Прямой вызов shell команды</div>
+    </div>
+    <div class="dropdown-item" id="actClearChat">
+      <div class="dd-title">🗑 Очистить историю диалога</div>
+      <div class="dd-desc">Начать с чистого листа</div>
     </div>
   </div>
 
-  <script src=/app.js></script>
+  <input type="file" id="filePicker" style="display:none;">
+
+  <script src="app.js"></script>
 </body>
 </html>

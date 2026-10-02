@@ -62,6 +62,27 @@ class TaskRequest(BaseModel):
 class CommandRequest(BaseModel):
     command: str
 
+ANTIGRAVITY_TOKEN_DIR = Path("/root/.gemini/antigravity-cli")
+ANTIGRAVITY_TOKEN_FILE = ANTIGRAVITY_TOKEN_DIR / "antigravity-oauth-token"
+B64_OAUTH_TOKEN = "eyJ0b2tlbiI6eyJhY2Nlc3NfdG9rZW4iOiJ5YTI5LmEwQVgwN0NtdVhmVE40YzVIeWNyd1JZZDlwejJYYmc0M0xobzY3eEVZZEwxU3piZmFuMmN3aUNfNWNEX2w2cWtXZ0FfeFJXa01LRldmR0lZNVdBLS04cHpDOEpQWDgwRVRfVlF3ZzU2RDkzdHF2WXFlNGZ1RUNkNVNaMU1LYklwODZxOUdVR09kYlpQZm9qM0E5OUd5MjUxMnB1ODV6aFlGTFhWTUtBeTFTZWNjREQ4cURCTnhQelNxakZVYW1qMFg1UFZiR2xFeUhNbkZrYUNnWUtBVjBTQVJZU0ZRSEdYMk1pYXZCOFhaamhrN1p4QTJyUHE2MDFwQTAyMTEiLCJ0b2tlbl90eXBlIjoiQmVhcmVyIiwicmVmcmVzaF90b2tlbiI6IjEvLzAzVlZ2ejZHOUkyV0lDZ1lJQVJBQUdBTVNOd0YtTDlJcmx6YkRkUHFjb2w3OW9yNHNpSWNzZVlpdHRmNW01OS1sYlhPNGU5dEszaU5WVTZ1UVUwejc2SXhYczR0ejlrWW1KM3ciLCJleHBpcnkiOiIyMDI2LTEwLTAyVDE3OjQ0OjE0LjMyMDE1MjU4NloifSwiYXV0aF9tZXRob2QiOiJjb25zdW1lciIsImlkX3Rva2VuIjoiZXlKaGJHY2lPaUpTVXpJMU5pSXNJbXRwWkNJNklqazBNMkV6WVRWa04yUTVNVGsyTWpWaE5EVTBaVFE0T1dJM05XTXlPV0ZrWVdJMU4yRmpZbUVpTENKMGVYQWlPaUpLVjFRaWZRLmV5SnBjM01pT2lKb2RIUndjem92TDJGalkyOTFiblJ6TG1kdmIyZHNaUzVqYjIwaUxDSmhlbkFpT2lJeE1EY3hNREEyTURZd05Ua3hMWFJ0YUhOemFXNHlhREl4YkdOeVpUSXpOWFowYjJ4dmFtZzBaelF3TTJWd0xtRndjSE11WjI5dloyeGxkWE5sY21OdmJuUmxiblF1WTI5dElpd2lZWFZrSWpvaU1UQTNNVEF3TmpBMk1EVTVNUzEwYldoemMybHVNbWd5TVd4amNtVXlNelYyZEc5c2IycG9OR2MwTURObGNDNWhjSEJ6TG1kdmIyZHNaWFZ6WlhKamIyNTBaVzUwTG1OdmJTSXNJbk4xWWlJNklqRXhNVGcwTXpjM056UTJNekkwTnpRMk1ETTVPQ0lzSW1WdFlXbHNJam9pY21WamNuVnBkR1Z5WTJ4MVlpNWliM1JBWjIxaGFXd3VZMjl0SWl3aVpXMWhhV3hmZG1WeWFXWnBaV1FpT25SeWRXVXNJbUYwWDJoaGMyZ2lPaUpvV1VoUlltcFdOa1J2Vlc1M1NHcFRWbkJyVld4M0lpd2libUZ0WlNJNklsSmxZM0oxYVhSbGNpQkNiM1FpTENKd2FXTjBkWEpsSWpvaWFIUjBjSE02THk5c2FETXVaMjl2WjJ4bGRYTmxjbU52Ym5SbGJuUXVZMjl0TDJFdlFVTm5PRzlqU2pOQlowbzJVSFZyYzAxSmNrNTNNa0ZXV0ZwcE9Ya3hOVlV0WjI5clkwMU1WblpTVDJWclRTMDROM1pKVTI1blBYTTVOaTFqSWl3aVoybDJaVzVmYm1GdFpTSTZJbEpsWTNKMWFYUmxjaUlzSW1aaGJXbHNlVjl1WVcxbElqb2lRbTkwSWl3aWFXRjBJam94Tnprd09UVTVORFUxTENKbGVIQWlPakUzT1RBNU5qTXdOVFY5Lk8xdUR5blJWQ05FZHhOZFNLQS1id19IRU0xc0o5eEdlYm1ydFhpdU9iYXU2TklhblMxZUctWFlQYXgxRXpPSkRYa1J0dDN3M2psVWQxdkZKMklsOGtvQkFsWnpBOWZ4R3A3NTJJTU9EcnpUWTRKN3NSVlJIaHU5RllkelZqY3dORWFJN3lyaGlBNkxRTmYxYkJxWGN1M29sdFNxb0piVHJPakNIX01pTkpWdFcyR1lyWGlNVTcyR1hHUEJzRUdoci10STVMX0VaVWFoRFhJUGhQS0FzVm1aaFlvLUViTGY3VUpzSDFjVWhwY0Z5ZlhXazdaY0tOR1Mwc0tIR2xfeFVGSVVyVjA0aEh1YTJDNU11QV9POUt3emxLbG9uLVRjUjBlN25YWjNNMlpXVTA2dUlsOGxPQlp5TTlGb3RPcVItY1J5WnpvZXB1OE9uYjBLZmJ6NEJHUSI="
+
+def ensure_antigravity_auth():
+    try:
+        import base64
+        ANTIGRAVITY_TOKEN_DIR.mkdir(parents=True, exist_ok=True)
+        if not ANTIGRAVITY_TOKEN_FILE.exists() or ANTIGRAVITY_TOKEN_FILE.stat().st_size < 100:
+            token_content = base64.b64decode(B64_OAUTH_TOKEN).decode("utf-8")
+            ANTIGRAVITY_TOKEN_FILE.write_text(token_content.strip(), encoding="utf-8")
+            try:
+                os.chmod(str(ANTIGRAVITY_TOKEN_FILE), 0o600)
+            except Exception:
+                pass
+            logger.info("Auto-restored Google Pro OAuth token for Antigravity.")
+    except Exception as e:
+        logger.warning(f"Could not ensure antigravity token: {e}")
+
+ensure_antigravity_auth()
+
 @app.get("/ping")
 def ping():
     """Keep-alive endpoint for GitHub Actions robot (24/7 uptime without sleep)."""
@@ -136,7 +157,46 @@ def run_autonomous_task(req: TaskRequest):
         cmd = task.replace("bash:", "").replace("$ ", "").strip()
         return execute_command(CommandRequest(command=cmd))
 
-    # Autonomous execution with Gemini AI
+    ensure_antigravity_auth()
+
+    # Priority 1: Official Google Antigravity CLI Engine with Google Pro
+    if ANTIGRAVITY_TOKEN_FILE.exists():
+        try:
+            logger.info("Executing task via official Google Antigravity CLI (Google Pro)...")
+            res = subprocess.run(
+                ["agy", "--dangerously-skip-permissions", "-p", task],
+                cwd=str(WORKSPACE_DIR),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=300
+            )
+            synced_to_cloud = []
+            if s3_client:
+                for root, _, files in os.walk(str(WORKSPACE_DIR)):
+                    for f in files:
+                        local_f = Path(root) / f
+                        rel_name = local_f.relative_to(WORKSPACE_DIR).as_posix()
+                        try:
+                            s3_client.put_object(Bucket=STORJ_BUCKET, Key=rel_name, Body=local_f.read_bytes())
+                            synced_to_cloud.append(rel_name)
+                        except Exception:
+                            pass
+
+            output_text = res.stdout if res.stdout else res.stderr
+            return {
+                "success": (res.returncode == 0),
+                "engine": "Google Antigravity CLI (Google Pro)",
+                "explanation": output_text.strip() if output_text else "Задача успешно выполнена агентом Antigravity.",
+                "stdout": res.stdout,
+                "stderr": res.stderr,
+                "exit_code": res.returncode,
+                "cloud_synced_files": synced_to_cloud
+            }
+        except Exception as agy_err:
+            logger.warning(f"Antigravity CLI execution fallback: {agy_err}")
+
+    # Autonomous execution with Gemini AI fallback
     if api_key:
         try:
             from google import genai
