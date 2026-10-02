@@ -1,0 +1,13 @@
+﻿name: Keepalive Render 24-7
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Render Backend
+        run: |
+          curl -s -f https://agent-master-server.onrender.com/ping || echo Ping completed
