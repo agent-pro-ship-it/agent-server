@@ -225,7 +225,7 @@ Return ONLY valid JSON.
                         local_f = Path(root) / f
                         rel_name = local_f.relative_to(WORKSPACE_DIR).as_posix()
                         try:
-                            s3_client.upload_file(str(local_f), STORJ_BUCKET, rel_name)
+                            s3_client.put_object(Bucket=STORJ_BUCKET, Key=rel_name, Body=local_f.read_bytes())
                             synced_to_cloud.append(rel_name)
                         except Exception as up_err:
                             logger.warning(f"Failed to sync {rel_name} to Storj: {up_err}")
