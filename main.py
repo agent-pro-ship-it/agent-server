@@ -160,28 +160,30 @@ Respond in JSON format:
 }}
 Return ONLY valid JSON.
 """
-            # Call Gemini with gemini-flash-latest
+            # Call Gemini 3.8 Flash model
             raw = None
-            try:
-                from google import genai
-                client = genai.Client(api_key=api_key)
-                resp = client.models.generate_content(
-                    model="gemini-flash-latest",
-                    contents=prompt
-                )
-                raw = resp.text.strip()
-            except Exception as sdk_err:
-                logger.warning(f"SDK generation failed ({sdk_err}), falling back to direct REST API...")
-                import httpx
-                rest_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key={api_key}"
-                rest_payload = {
-                    "contents": [{"parts": [{"text": prompt}]}]
-                }
-                with httpx.Client(timeout=60.0) as http_client:
-                    r = http_client.post(rest_url, json=rest_payload)
-                    r.raise_for_status()
-                    res_json = r.json()
-                    raw = res_json["candidates"][0]["content"]["parts"][0]["text"].strip()
+            models_to_try = ["gemini-3.8-flash", "gemini-flash-latest", "gemma-4-26b-a4b-it"]
+            import httpx
+            with httpx.Client(timeout=60.0) as http_client:
+                for target_model in models_to_try:
+                    try:
+                        rest_url = f"https://generativelanguage.googleapis.com/v1beta/models/{target_model}:generateContent?key={api_key}"
+                        rest_payload = {
+                            "contents": [{"parts": [{"text": prompt}]}]
+                        }
+                        r = http_client.post(rest_url, json=rest_payload)
+                        if r.status_code == 200:
+                            res_json = r.json()
+                            raw = res_json["candidates"][0]["content"]["parts"][0]["text"].strip()
+                            logger.info(f"Successfully generated with {target_model}")
+                            break
+                        else:
+                            logger.warning(f"Model {target_model} returned {r.status_code}: {r.text[:100]}")
+                    except Exception as err:
+                        logger.warning(f"Error calling {target_model}: {err}")
+
+            if not raw:
+                raise RuntimeError("Failed to generate response across all models.")
 
             if raw.startswith("```json"):
                 raw = raw[7:]
