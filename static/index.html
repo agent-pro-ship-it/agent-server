@@ -150,9 +150,21 @@
         <!-- Floating Antigravity Input Box -->
         <div class="chat-input-wrapper">
           <div class="input-card">
-            <!-- Recording Voice Status Indicator -->
+            <!-- Quick Action Chips -->
+            <div class="quick-chips-bar">
+              <span class="quick-chip" data-cmd="$ ls -la">💻 bash</span>
+              <span class="quick-chip" data-cmd="git status">⎇ git</span>
+              <span class="quick-chip" data-cmd="Напиши unit-тесты для проекта">🧪 tests</span>
+              <span class="quick-chip" data-cmd="Синхронизируй проект с Storj S3">☁ storj</span>
+              <span class="quick-chip" data-cmd="Проанализируй код и исправь ошибки">⚡ fix</span>
+              <span class="quick-chip" data-cmd="Создай Dockerfile и docker-compose">🐳 docker</span>
+            </div>
+
+            <!-- Recording Voice Status Indicator with Waveform -->
             <div class="voice-status-bar" id="voiceStatusBar" style="display:none;">
-              <span class="recording-pulse"></span>
+              <div class="voice-wave">
+                <span class="bar"></span><span class="bar"></span><span class="bar"></span><span class="bar"></span>
+              </div>
               <span id="voiceStatusText">Идет запись голоса... Говорите задачу</span>
             </div>
 
