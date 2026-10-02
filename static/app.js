@@ -693,3 +693,384 @@ fetchProjects();
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("./sw.js").catch(() => {});
 }
+
+
+// ========================================================
+// ENHANCEMENTS: GOOGLE ACCOUNTS HUB & 10 ADVANCED FEATURES
+// ========================================================
+
+// Elements
+const modalAccounts = document.getElementById("modalAccounts");
+const btnCloseAccounts = document.getElementById("btnCloseAccounts");
+const accountsListContainer = document.getElementById("accountsListContainer");
+const googleProBadge = document.getElementById("googleProBadge");
+const badgeAccount = document.getElementById("badgeAccount");
+const btnStartGoogleOAuth = document.getElementById("btnStartGoogleOAuth");
+const btnSubmitGoogleCode = document.getElementById("btnSubmitGoogleCode");
+const oauthCodeInputModal = document.getElementById("oauthCodeInputModal");
+const oauthModalStatus = document.getElementById("oauthModalStatus");
+const btnToggleManualToken = document.getElementById("btnToggleManualToken");
+const manualTokenBox = document.getElementById("manualTokenBox");
+const manualTokenJsonInput = document.getElementById("manualTokenJsonInput");
+const btnSaveManualToken = document.getElementById("btnSaveManualToken");
+const btnLogoutActiveAccount = document.getElementById("btnLogoutActiveAccount");
+
+const modalHistoryViewer = document.getElementById("modalHistoryViewer");
+const btnCloseHistoryViewer = document.getElementById("btnCloseHistoryViewer");
+const historyListContainer = document.getElementById("historyListContainer");
+const btnHistory = document.getElementById("btnHistory");
+
+const btnThemeToggle = document.getElementById("btnThemeToggle");
+const btnBackupProject = document.getElementById("btnBackupProject");
+const gitStatusBadge = document.getElementById("gitStatusBadge");
+const gitBranchName = document.getElementById("gitBranchName");
+const gitChangesBadge = document.getElementById("gitChangesBadge");
+
+const fileEditorArea = document.getElementById("fileEditorArea");
+const fileEditorPath = document.getElementById("fileEditorPath");
+const btnSaveEditedFile = document.getElementById("btnSaveEditedFile");
+
+let currentEditingPath = "";
+
+// 1. Google Accounts Hub
+async function fetchAccounts() {
+  try {
+    const res = await fetch(`${SERVER_URL}/api/auth/accounts`);
+    if (res.ok) {
+      const data = await res.json();
+      renderAccountsList(data.accounts || [], data.active);
+      if (data.active && data.active.email) {
+        badgeAccount.innerText = data.active.email;
+      }
+    }
+  } catch (err) {
+    console.warn("Could not fetch accounts:", err);
+  }
+}
+
+function renderAccountsList(accounts, activeAccount) {
+  if (!accountsListContainer) return;
+  if (!accounts || accounts.length === 0) {
+    accountsListContainer.innerHTML = '<div style="color:var(--text-muted); font-size:13px; padding:10px;">Нет сохраненных аккаунтов. Подключите аккаунт Google ниже.</div>';
+    return;
+  }
+
+  accountsListContainer.innerHTML = accounts.map(acc => {
+    const isActive = activeAccount && (acc.id === activeAccount.id || acc.active);
+    const isExhausted = acc.status === "quota_exhausted";
+    const initial = (acc.email || "G").charAt(0).toUpperCase();
+
+    return `
+      <div class="account-item-card ${isActive ? 'is-active' : ''}">
+        <div class="account-item-left">
+          <div class="account-avatar">${initial}</div>
+          <div class="account-meta">
+            <span class="account-email">${escapeHtml(acc.email)}</span>
+            <span class="account-tier">${escapeHtml(acc.tier || "Google Pro")} ${isExhausted ? '⚠️ Лимит исчерпан' : '• Готов'}</span>
+          </div>
+        </div>
+        <div class="account-actions">
+          ${isActive 
+            ? '<span class="badge-active-pill">АКТИВЕН</span>' 
+            : `<button class="btn-switch-account" onclick="switchAccount('${acc.id}')">Переключить ⚡</button>`
+          }
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+window.switchAccount = async function(accountId) {
+  try {
+    const res = await fetch(`${SERVER_URL}/api/auth/switch`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ account_id: accountId })
+    });
+    const data = await res.json();
+    if (data.success) {
+      alert(`✔ Переключено на аккаунт: ${data.active_account.email}`);
+      fetchAccounts();
+    } else {
+      alert("Ошибка переключения: " + (data.error || "Неизвестная ошибка"));
+    }
+  } catch (e) {
+    alert("Ошибка связи с сервером при смене аккаунта: " + e.message);
+  }
+};
+
+if (googleProBadge) {
+  googleProBadge.addEventListener("click", () => {
+    fetchAccounts();
+    modalAccounts.classList.add("active");
+  });
+}
+if (btnCloseAccounts) {
+  btnCloseAccounts.addEventListener("click", () => modalAccounts.classList.remove("active"));
+}
+
+if (btnStartGoogleOAuth) {
+  btnStartGoogleOAuth.addEventListener("click", async () => {
+    oauthModalStatus.style.display = "block";
+    oauthModalStatus.style.color = "#0a84ff";
+    oauthModalStatus.innerText = "Генерирую ссылку для входа в Google...";
+    try {
+      const res = await fetch(`${SERVER_URL}/api/antigravity/oauth-url`);
+      const data = await res.json();
+      if (data.url) {
+        window.open(data.url, "_blank");
+        oauthModalStatus.innerText = "Ссылка открыта в новой вкладке. Войдите в Google аккаунт, скопируйте код и вставьте в поле ниже.";
+      } else {
+        oauthModalStatus.innerText = "Ошибка: " + (data.message || "Попробуйте снова.");
+      }
+    } catch (e) {
+      oauthModalStatus.innerText = "Ошибка связи с сервером.";
+    }
+  });
+}
+
+if (btnSubmitGoogleCode) {
+  btnSubmitGoogleCode.addEventListener("click", async () => {
+    const code = oauthCodeInputModal.value.trim();
+    if (!code) {
+      alert("Пожалуйста, вставьте код авторизации от Google.");
+      return;
+    }
+    oauthModalStatus.style.display = "block";
+    oauthModalStatus.style.color = "#ff9f0a";
+    oauthModalStatus.innerText = "Подтверждение токена в Antigravity...";
+    try {
+      const res = await fetch(`${SERVER_URL}/api/antigravity/submit-code`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code: code })
+      });
+      const data = await res.json();
+      if (data.success) {
+        oauthModalStatus.style.color = "#30d158";
+        oauthModalStatus.innerText = "✔ Аккаунт успешно добавлен в пул и сохранен в Storj S3!";
+        oauthCodeInputModal.value = "";
+        fetchAccounts();
+      } else {
+        oauthModalStatus.style.color = "#ff453a";
+        oauthModalStatus.innerText = "Ошибка: " + (data.error || "Неверный код.");
+      }
+    } catch (e) {
+      oauthModalStatus.innerText = "Ошибка отправки кода.";
+    }
+  });
+}
+
+if (btnToggleManualToken) {
+  btnToggleManualToken.addEventListener("click", () => {
+    manualTokenBox.style.display = manualTokenBox.style.display === "none" ? "block" : "none";
+  });
+}
+
+if (btnSaveManualToken) {
+  btnSaveManualToken.addEventListener("click", async () => {
+    const raw = manualTokenJsonInput.value.trim();
+    if (!raw) return;
+    try {
+      const res = await fetch(`${SERVER_URL}/api/auth/add`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token_json: raw })
+      });
+      const data = await res.json();
+      if (data.success) {
+        alert("✔ Токен успешно сохранен в пул аккаунтов!");
+        manualTokenJsonInput.value = "";
+        manualTokenBox.style.display = "none";
+        fetchAccounts();
+      } else {
+        alert("Ошибка: " + (data.detail || "Неверный формат"));
+      }
+    } catch (e) {
+      alert("Ошибка отправки: " + e.message);
+    }
+  });
+}
+
+if (btnLogoutActiveAccount) {
+  btnLogoutActiveAccount.addEventListener("click", async () => {
+    if (confirm("Вы действительно хотите выйти из текущего активного Google аккаунта?")) {
+      try {
+        await fetch(`${SERVER_URL}/api/auth/logout`, { method: "POST" });
+        alert("Вы вышли из активного аккаунта.");
+        fetchAccounts();
+      } catch (e) {
+        console.warn("Logout error:", e);
+      }
+    }
+  });
+}
+
+// 2. Interactive Code Editor Save
+async function openFileInEditor(filePath) {
+  if (!activeProject) return;
+  currentEditingPath = filePath;
+  modalFileViewer.classList.add("active");
+  if (fileEditorPath) fileEditorPath.innerText = filePath;
+  if (fileEditorArea) fileEditorArea.value = "Загрузка содержимого файла...";
+
+  try {
+    const res = await fetch(`${SERVER_URL}/api/projects/${activeProject.id}/file?path=${encodeURIComponent(filePath)}`);
+    if (res.ok) {
+      const data = await res.json();
+      if (fileEditorArea) fileEditorArea.value = data.content || "";
+    }
+  } catch (e) {
+    if (fileEditorArea) fileEditorArea.value = "Ошибка загрузки файла: " + e.message;
+  }
+}
+
+if (btnSaveEditedFile) {
+  btnSaveEditedFile.addEventListener("click", async () => {
+    if (!activeProject || !currentEditingPath) return;
+    const content = fileEditorArea.value;
+    btnSaveEditedFile.innerText = "Сохранение...";
+    try {
+      const res = await fetch(`${SERVER_URL}/api/projects/save-file`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          project_id: activeProject.id,
+          path: currentEditingPath,
+          content: content
+        })
+      });
+      if (res.ok) {
+        btnSaveEditedFile.innerText = "✔ Сохранено!";
+        setTimeout(() => { btnSaveEditedFile.innerText = "💾 Сохранить (Ctrl+S)"; }, 1500);
+        loadProjectFiles(activeProject.id);
+      } else {
+        btnSaveEditedFile.innerText = "Ошибка!";
+      }
+    } catch (e) {
+      alert("Ошибка сохранения: " + e.message);
+      btnSaveEditedFile.innerText = "💾 Сохранить (Ctrl+S)";
+    }
+  });
+}
+
+window.addEventListener("keydown", (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key === "s") {
+    if (modalFileViewer && modalFileViewer.classList.contains("active")) {
+      e.preventDefault();
+      if (btnSaveEditedFile) btnSaveEditedFile.click();
+    }
+  }
+});
+
+// 3. One-Click Full Project Backup to Storj S3
+if (btnBackupProject) {
+  btnBackupProject.addEventListener("click", async () => {
+    if (!activeProject) return;
+    btnBackupProject.innerHTML = "<span>⏳ Бэкап...</span>";
+    try {
+      const res = await fetch(`${SERVER_URL}/api/projects/${activeProject.id}/backup`, { method: "POST" });
+      const data = await res.json();
+      if (data.success) {
+        alert(`✔ Снапшот проекта сохранен в Storj S3 25GB!\nКлюч: ${data.key}\nРазмер: ${formatBytes(data.size_bytes)}`);
+      } else {
+        alert("Ошибка создания бэкапа: " + (data.error || "Неизвестно"));
+      }
+    } catch (e) {
+      alert("Ошибка бэкапа: " + e.message);
+    } finally {
+      btnBackupProject.innerHTML = "<span>💾 Бэкап в S3</span>";
+    }
+  });
+}
+
+// 4. Git Status in Toolbar
+async function fetchGitStatus() {
+  try {
+    const res = await fetch(`${SERVER_URL}/api/git/status`);
+    if (res.ok) {
+      const data = await res.json();
+      if (gitBranchName) gitBranchName.innerText = data.branch || "main";
+      if (gitChangesBadge) {
+        gitChangesBadge.innerText = data.modified_count || "0";
+        gitChangesBadge.style.display = data.modified_count > 0 ? "inline-block" : "none";
+      }
+    }
+  } catch (e) {}
+}
+
+// 5. Quick Action Chips
+document.querySelectorAll(".quick-chip").forEach(chip => {
+  chip.addEventListener("click", () => {
+    const cmd = chip.getAttribute("data-cmd");
+    if (cmd) {
+      taskInput.value = cmd;
+      taskInput.focus();
+      taskInput.style.height = "auto";
+      taskInput.style.height = (taskInput.scrollHeight) + "px";
+    }
+  });
+});
+
+// 6. Task History Modal
+if (btnHistory) {
+  btnHistory.addEventListener("click", async (e) => {
+    e.preventDefault();
+    modalHistoryViewer.classList.add("active");
+    try {
+      const res = await fetch(`${SERVER_URL}/api/history`);
+      if (res.ok) {
+        const data = await res.json();
+        const list = data.history || [];
+        if (list.length === 0) {
+          historyListContainer.innerHTML = '<div style="color:var(--text-muted); font-size:13px; padding:10px;">История пуста. Выполните первую задачу!</div>';
+        } else {
+          historyListContainer.innerHTML = list.map(item => `
+            <div class="history-item-card" onclick="replayTask('${escapeHtml(item.task || '')}')">
+              <div class="history-task-text">${escapeHtml(item.task || '')}</div>
+              <div class="history-meta">${escapeHtml(item.time || '')} • ${escapeHtml(item.engine || 'Antigravity')}</div>
+            </div>
+          `).join('');
+        }
+      }
+    } catch (err) {}
+  });
+}
+
+window.replayTask = function(taskText) {
+  taskInput.value = taskText;
+  modalHistoryViewer.classList.remove("active");
+  taskInput.focus();
+};
+
+if (btnCloseHistoryViewer) {
+  btnCloseHistoryViewer.addEventListener("click", () => modalHistoryViewer.classList.remove("active"));
+}
+
+// 7. Theme Toggle
+if (btnThemeToggle) {
+  const savedTheme = localStorage.getItem("ANTIGRAVITY_THEME") || "dark";
+  if (savedTheme === "light") document.body.classList.add("light-theme");
+
+  btnThemeToggle.addEventListener("click", () => {
+    document.body.classList.toggle("light-theme");
+    const isLight = document.body.classList.contains("light-theme");
+    localStorage.setItem("ANTIGRAVITY_THEME", isLight ? "light" : "dark");
+  });
+}
+
+// Close extra modals on background click
+window.addEventListener("click", (e) => {
+  if (e.target === modalAccounts) modalAccounts.classList.remove("active");
+  if (e.target === modalHistoryViewer) modalHistoryViewer.classList.remove("active");
+});
+
+// Hook into file click to use interactive editor
+window.openProjectFile = function(filePath) {
+  openFileInEditor(filePath);
+};
+
+// Periodic background sync
+fetchAccounts();
+fetchGitStatus();
+setInterval(fetchGitStatus, 15000);

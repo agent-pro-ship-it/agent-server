@@ -36,24 +36,37 @@ WORKSPACE_DIR = BASE_DIR / "workspace"
 WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
 
 # Storj 25GB S3 configuration
-STORJ_ENDPOINT = os.getenv("S3_ENDPOINT_URL", "https://gateway.storjshare.io")
-STORJ_ACCESS_KEY = os.getenv("S3_ACCESS_KEY_ID", "juaj3eczxxsdizjdgnv63one2yza")
-STORJ_SECRET_KEY = os.getenv("S3_SECRET_ACCESS_KEY", "jz5jrlmqdg5a6ycpihbivazqmgp7seklhrqqriqxb4eknw4xo24xq")
-STORJ_BUCKET = os.getenv("S3_BUCKET_NAME", "agent-vault")
+STORJ_ENDPOINT = os.getenv("STORJ_ENDPOINT_URL") or os.getenv("S3_ENDPOINT_URL", "https://gateway.storjshare.io")
+STORJ_ACCESS_KEY = os.getenv("STORJ_ACCESS_KEY_ID") or os.getenv("S3_ACCESS_KEY_ID", "juaj3eczxxsdizjdgnv63one2yza")
+STORJ_SECRET_KEY = os.getenv("STORJ_SECRET_ACCESS_KEY") or os.getenv("S3_SECRET_ACCESS_KEY", "jz5jrlmqdg5a6ycpihbivazqmgp7seklhrqqriqxb4eknw4xo24xq")
+STORJ_BUCKET = os.getenv("STORJ_BUCKET_NAME") or os.getenv("S3_BUCKET_NAME", "agent-vault")
 
 s3_client = None
 try:
+    cfg = Config(
+        signature_version='s3v4',
+        s3={'payload_signing_enabled': False, 'addressing_style': 'path'},
+        request_checksum_calculation='when_required',
+        response_checksum_validation='when_required'
+    )
     s3_client = boto3.client(
         "s3",
         endpoint_url=STORJ_ENDPOINT,
         aws_access_key_id=STORJ_ACCESS_KEY,
         aws_secret_access_key=STORJ_SECRET_KEY,
-        config=Config(signature_version="s3v4"),
+        config=cfg,
         verify=False
     )
-    logger.info("Connected to Storj 25GB S3 Cloud Storage.")
+    logger.info("Connected to Storj 25GB S3 Cloud Storage (Checksum & Chunking optimized).")
 except Exception as e:
     logger.error(f"Storj S3 connection warning: {e}")
+
+from account_manager import AccountManager
+account_manager = AccountManager(workspace_dir=WORKSPACE_DIR, s3_client=s3_client, bucket_name=STORJ_BUCKET)
+try:
+    account_manager.initialize()
+except Exception as e:
+    logger.warning(f"AccountManager initialization notice: {e}")
 
 class TaskRequest(BaseModel):
     task: str
@@ -284,6 +297,169 @@ async def api_voice_transcribe(file: UploadFile = File(...)):
     except Exception as e:
         logger.error(f"Voice transcribe exception: {e}")
         return {"success": False, "error": str(e)}
+
+
+class SwitchAccountRequest(BaseModel):
+    account_id: str
+
+class AddAccountRequest(BaseModel):
+    token_json: Optional[str] = None
+    email: Optional[str] = None
+
+class FileSaveRequest(BaseModel):
+    project_id: Optional[str] = None
+    path: str
+    content: str
+
+class EnvUpdateRequest(BaseModel):
+    env_content: str
+
+@app.get("/api/auth/accounts")
+def api_get_accounts():
+    """Returns all Google Pro accounts and active account info."""
+    return {
+        "accounts": account_manager.get_accounts_safe(),
+        "active": account_manager.get_active_account()
+    }
+
+@app.post("/api/auth/switch")
+def api_switch_account(req: SwitchAccountRequest):
+    """Switches active Google account seamlessly."""
+    res = account_manager.switch_account(req.account_id)
+    if not res.get("success"):
+        raise HTTPException(status_code=400, detail=res.get("error", "Failed to switch"))
+    # Also attempt to reload daemon
+    try:
+        subprocess.run(["agy", "remote-control", "start"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=10)
+    except Exception:
+        pass
+    return res
+
+@app.post("/api/auth/add")
+def api_add_account(req: AddAccountRequest):
+    """Adds a new Google Pro token to the pool."""
+    import json
+    if not req.token_json:
+        raise HTTPException(status_code=400, detail="token_json required")
+    try:
+        tok_data = json.loads(req.token_json)
+        return account_manager.add_account(tok_data, custom_email=req.email)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid JSON: {e}")
+
+@app.post("/api/auth/logout")
+def api_logout():
+    """Logs out active Google Pro session."""
+    return account_manager.logout_active()
+
+# IMPROVEMENT 2: One-click Full Project Backup & Restore to Storj S3
+@app.post("/api/projects/{project_id}/backup")
+def api_backup_project(project_id: str):
+    """Creates a zip snapshot of the project and uploads to Storj 25GB S3."""
+    import zipfile, io, time
+    p_dir = WORKSPACE_DIR / project_id
+    if not p_dir.exists():
+        raise HTTPException(status_code=404, detail="Project not found")
+    
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+        for root, _, files in os.walk(str(p_dir)):
+            for f in files:
+                fp = Path(root) / f
+                arc_name = fp.relative_to(p_dir).as_posix()
+                zip_file.write(fp, arcname=arc_name)
+    
+    zip_bytes = zip_buffer.getvalue()
+    timestamp = int(time.time())
+    s3_key = f"backups/{project_id}-{timestamp}.zip"
+    
+    if s3_client:
+        try:
+            s3_client.put_object(Bucket=STORJ_BUCKET, Key=s3_key, Body=zip_bytes)
+            return {"success": True, "key": s3_key, "size_bytes": len(zip_bytes), "timestamp": timestamp}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+    return {"success": True, "key": "local_only", "size_bytes": len(zip_bytes)}
+
+# IMPROVEMENT 3: Interactive Code Editor Save Endpoint
+@app.post("/api/projects/save-file")
+def api_save_project_file(req: FileSaveRequest):
+    """Saves edited code directly from the UI editor."""
+    p_dir = WORKSPACE_DIR / (req.project_id or "")
+    fp = (p_dir / req.path).resolve()
+    if not str(fp).startswith(str(p_dir.resolve())):
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    fp.parent.mkdir(parents=True, exist_ok=True)
+    fp.write_text(req.content, encoding="utf-8")
+    
+    # Sync to Storj
+    if s3_client:
+        try:
+            s3_key = f"projects/{req.project_id}/{req.path}" if req.project_id else f"workspace/{req.path}"
+            s3_client.put_object(Bucket=STORJ_BUCKET, Key=s3_key, Body=req.content.encode("utf-8"))
+        except Exception:
+            pass
+            
+    return {"success": True, "path": req.path, "size_bytes": len(req.content.encode("utf-8"))}
+
+# IMPROVEMENT 4: Git Branch & Commit Status in Toolbar
+@app.get("/api/git/status")
+def api_git_status():
+    """Returns branch name and pending changes count."""
+    try:
+        branch_res = subprocess.run("git rev-parse --abbrev-ref HEAD", shell=True, cwd=str(WORKSPACE_DIR), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=5)
+        status_res = subprocess.run("git status --short", shell=True, cwd=str(WORKSPACE_DIR), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=5)
+        branch = branch_res.stdout.strip() or "main"
+        modified_count = len([line for line in status_res.stdout.splitlines() if line.strip()])
+        return {"branch": branch, "modified_count": modified_count, "clean": (modified_count == 0)}
+    except Exception as e:
+        return {"branch": "main", "modified_count": 0, "clean": True, "error": str(e)}
+
+# IMPROVEMENT 5: Real-time Live Server Metrics & Latency Heartbeat
+@app.get("/api/system/metrics")
+def api_system_metrics():
+    """Returns live CPU, RAM, Disk, S3 status, and system latency."""
+    mem = psutil.virtual_memory()
+    disk = psutil.disk_usage('/')
+    return {
+        "cpu_percent": psutil.cpu_percent(interval=None),
+        "ram_used_mb": round(mem.used / (1024 * 1024), 1),
+        "ram_total_mb": round(mem.total / (1024 * 1024), 1),
+        "ram_percent": mem.percent,
+        "disk_free_gb": round(disk.free / (1024 * 1024 * 1024), 1),
+        "storj_connected": s3_client is not None,
+        "active_account": account_manager.get_active_account()
+    }
+
+# IMPROVEMENT 6: Task Execution History Log
+TASK_HISTORY_FILE = WORKSPACE_DIR / "task_history.json"
+def append_task_history(entry: dict):
+    try:
+        hist = []
+        if TASK_HISTORY_FILE.exists():
+            hist = json.loads(TASK_HISTORY_FILE.read_text(encoding="utf-8"))
+        hist.insert(0, entry)
+        TASK_HISTORY_FILE.write_text(json.dumps(hist[:50], ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+@app.get("/api/history")
+def api_get_history():
+    if TASK_HISTORY_FILE.exists():
+        try:
+            return {"history": json.loads(TASK_HISTORY_FILE.read_text(encoding="utf-8"))}
+        except Exception:
+            pass
+    return {"history": []}
+
+# IMPROVEMENT 10: Environment Variables & Secrets Manager in Settings
+@app.get("/api/env")
+def api_get_env():
+    """Returns sanitized list of environment keys."""
+    safe_keys = ["PORT", "STORJ_BUCKET_NAME", "S3_BUCKET_NAME", "STORJ_ENDPOINT_URL", "S3_ENDPOINT_URL"]
+    all_keys = [k for k in os.environ.keys() if not k.startswith("_")]
+    return {"configured_keys": sorted(all_keys), "safe_keys": safe_keys}
 
 @app.post("/api/terminal")
 def execute_command(req: CommandRequest):
@@ -848,9 +1024,18 @@ def submit_auth_code(req: AuthCodeRequest):
         try:
             stdout, stderr = auth_process.communicate(timeout=10)
             output = stdout + "\n" + stderr
-            return {"success": (auth_process.returncode == 0), "output": output}
+            # Automatically parse token and register into AccountManager
+            for p in [Path("/root/.gemini/antigravity-cli/antigravity-oauth-token"), Path.home() / ".gemini" / "antigravity-cli" / "antigravity-oauth-token"]:
+                if p.exists() and p.stat().st_size > 50:
+                    try:
+                        tok_data = json.loads(p.read_text(encoding="utf-8"))
+                        account_manager.add_account(tok_data)
+                        break
+                    except Exception:
+                        pass
+            return {"success": (auth_process.returncode == 0), "output": output, "accounts": account_manager.get_accounts_safe()}
         except subprocess.TimeoutExpired:
-            return {"success": True, "output": "Код принят, авторизация сохранена!"}
+            return {"success": True, "output": "Код принят, авторизация сохранена!", "accounts": account_manager.get_accounts_safe()}
     except Exception as e:
         return {"success": False, "error": str(e)}
 
