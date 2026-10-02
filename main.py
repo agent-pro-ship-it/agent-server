@@ -48,7 +48,8 @@ try:
         endpoint_url=STORJ_ENDPOINT,
         aws_access_key_id=STORJ_ACCESS_KEY,
         aws_secret_access_key=STORJ_SECRET_KEY,
-        config=Config(signature_version="s3v4")
+        config=Config(signature_version="s3v4"),
+        verify=False
     )
     logger.info("Connected to Storj 25GB S3 Cloud Storage.")
 except Exception as e:
