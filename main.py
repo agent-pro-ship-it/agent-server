@@ -382,6 +382,77 @@ def start_remote_control():
     except Exception as e:
         return {"success": False, "error": str(e)}
 
+# Background daemon for ttyd
+ttyd_process = None
+
+@app.on_event("startup")
+def startup_event():
+    global ttyd_process
+    try:
+        ttyd_process = subprocess.Popen(
+            ["ttyd", "-b", "/terminal", "-p", "7681", "-W", "-t", "fontSize=15", "bash"],
+            cwd=str(WORKSPACE_DIR)
+        )
+        logger.info("Started ttyd web terminal daemon on port 7681")
+    except Exception as e:
+        logger.warning(f"Failed to start ttyd: {e}")
+
+@app.on_event("shutdown")
+def shutdown_event():
+    global ttyd_process
+    if ttyd_process:
+        try:
+            ttyd_process.terminate()
+        except Exception:
+            pass
+
+@app.websocket("/terminal/ws")
+async def terminal_websocket(client_ws: WebSocket):
+    await client_ws.accept()
+    import websockets
+    import asyncio
+    async with websockets.connect("ws://127.0.0.1:7681/terminal/ws") as server_ws:
+        async def forward_to_server():
+            try:
+                while True:
+                    data = await client_ws.receive()
+                    if "text" in data:
+                        await server_ws.send(data["text"])
+                    elif "bytes" in data:
+                        await server_ws.send(data["bytes"])
+            except Exception:
+                pass
+
+        async def forward_to_client():
+            try:
+                while True:
+                    msg = await server_ws.recv()
+                    if isinstance(msg, str):
+                        await client_ws.send_text(msg)
+                    else:
+                        await client_ws.send_bytes(msg)
+            except Exception:
+                pass
+
+        await asyncio.gather(forward_to_server(), forward_to_client())
+
+@app.get("/terminal")
+@app.get("/terminal/{full_path:path}")
+async def terminal_http_proxy(full_path: str = ""):
+    import httpx
+    from fastapi import Response
+    target_url = f"http://127.0.0.1:7681/terminal/{full_path}"
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        try:
+            resp = await client.get(target_url)
+            return Response(
+                content=resp.content,
+                status_code=resp.status_code,
+                media_type=resp.headers.get("content-type")
+            )
+        except Exception as e:
+            return Response(content=f"Терминал запускается, обновите страницу через 3 секунды... ({e})", status_code=503)
+
 # Standalone UI endpoint if accessed directly
 @app.get("/")
 def root():
