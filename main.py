@@ -290,6 +290,32 @@ def git_sync(msg: str = Form("Autonomous Agent Workspace Sync")):
     res = subprocess.run(cmd, shell=True, cwd=str(WORKSPACE_DIR), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     return {"exit_code": res.returncode, "stdout": res.stdout, "stderr": res.stderr}
 
+@app.get("/api/antigravity/status")
+def antigravity_status():
+    """Checks Antigravity CLI installation and version."""
+    try:
+        res = subprocess.run(["agy", "--version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=10)
+        return {
+            "installed": (res.returncode == 0),
+            "version": res.stdout.strip() if res.returncode == 0 else "not_found",
+            "output": res.stdout.strip() or res.stderr.strip()
+        }
+    except Exception as e:
+        return {"installed": False, "error": str(e)}
+
+@app.post("/api/antigravity/remote-control")
+def start_remote_control():
+    """Starts Antigravity remote control daemon for official web dashboard access."""
+    try:
+        res = subprocess.run(["agy", "remote-control", "start"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=30)
+        return {
+            "success": (res.returncode == 0),
+            "stdout": res.stdout,
+            "stderr": res.stderr
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
 # Standalone UI endpoint if accessed directly
 @app.get("/")
 def root():

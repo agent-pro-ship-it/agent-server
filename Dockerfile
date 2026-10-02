@@ -6,11 +6,17 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-# Install system dependencies (git, curl)
+# Install system dependencies (git, curl, tar, ca-certificates)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     curl \
+    tar \
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/*
+
+# Install official Google Antigravity CLI (agy)
+RUN curl -fsSL https://antigravity.google/cli/install.sh | bash -s -- --dir /usr/local/bin && \
+    chmod +x /usr/local/bin/agy
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
