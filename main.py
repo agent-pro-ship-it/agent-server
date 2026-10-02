@@ -58,9 +58,48 @@ except Exception as e:
 class TaskRequest(BaseModel):
     task: str
     gemini_key: Optional[str] = None
+    project_id: Optional[str] = None
 
 class CommandRequest(BaseModel):
     command: str
+    project_id: Optional[str] = None
+
+class ProjectCreateRequest(BaseModel):
+    name: str
+    task: Optional[str] = "Новая задача Antigravity"
+
+PROJECTS_FILE = WORKSPACE_DIR / "projects.json"
+
+DEFAULT_PROJECTS = [
+    {"id": "agent", "name": "Агент", "task": "Бесплатный Сервер Для Антигравити", "time": "2m", "active": True},
+    {"id": "recruiter-club", "name": "сайт Recruiter I Club", "task": "Premium B2B SaaS Architecture", "time": "53m", "active": False},
+    {"id": "resume-optimizer", "name": "парсер и резюме", "task": "Free AI Resume Optimizer", "time": "1h", "active": False},
+    {"id": "online-crm", "name": "проект онлайн срм", "task": "Разработка Полнофункциональной CRM", "time": "7h", "active": False},
+    {"id": "doc-automation", "name": "прога для договор...", "task": "Автоматизация Заполнения Документов", "time": "14d", "active": False},
+    {"id": "recruiter-project", "name": "Recruiter проект", "task": "Getting Vercel Access Token", "time": "18d", "active": False},
+    {"id": "site-landing", "name": "сайт", "task": "Разработка Премиального Лендинга", "time": "22d", "active": False},
+    {"id": "telegram-bot", "name": "telegram bot", "task": "Создание Бота Для Сбора Заявок", "time": "1mo", "active": False},
+    {"id": "crm-debug", "name": "отладка срм антиг...", "task": "Фикс багов и деплой на сервер", "time": "2mo", "active": False}
+]
+
+def get_all_projects():
+    if not PROJECTS_FILE.exists():
+        try:
+            PROJECTS_FILE.write_text(json.dumps(DEFAULT_PROJECTS, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception:
+            pass
+    try:
+        projs = json.loads(PROJECTS_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        projs = DEFAULT_PROJECTS
+    for p in projs:
+        p_dir = WORKSPACE_DIR / p["id"]
+        try:
+            p_dir.mkdir(parents=True, exist_ok=True)
+            p["files_count"] = sum(len(f) for _, _, f in os.walk(str(p_dir)))
+        except Exception:
+            p["files_count"] = 0
+    return projs
 
 ANTIGRAVITY_TOKEN_DIR = Path("/root/.gemini/antigravity-cli")
 ANTIGRAVITY_TOKEN_FILE = ANTIGRAVITY_TOKEN_DIR / "antigravity-oauth-token"
@@ -119,15 +158,146 @@ def get_status():
         }
     }
 
+
+@app.get("/api/projects")
+def api_get_projects():
+    return {"projects": get_all_projects()}
+
+@app.post("/api/projects")
+def api_create_project(req: ProjectCreateRequest):
+    import re, time
+    name = req.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Project name required")
+    slug = re.sub(r'[^a-zA-Z0-9_\-Ѐ-ӿ]', '-', name).lower().strip('-')
+    if not slug:
+        slug = f"project-{int(time.time())}"
+    
+    p_dir = WORKSPACE_DIR / slug
+    p_dir.mkdir(parents=True, exist_ok=True)
+
+    readme_path = p_dir / "README.md"
+    if not readme_path.exists():
+        readme_content = f"# {name}\n\n{req.task or 'Antigravity Cloud Project Workspace'}\n"
+        readme_path.write_text(readme_content, encoding="utf-8")
+        if s3_client:
+            try:
+                s3_client.put_object(Bucket=STORJ_BUCKET, Key=f"projects/{slug}/README.md", Body=readme_content.encode("utf-8"))
+            except Exception:
+                pass
+
+    projs = get_all_projects()
+    existing = next((p for p in projs if p["id"] == slug), None)
+    if not existing:
+        new_proj = {
+            "id": slug,
+            "name": name,
+            "task": req.task or "Новая задача",
+            "time": "just now",
+            "active": True
+        }
+        projs.insert(0, new_proj)
+        for p in projs:
+            if p["id"] != slug:
+                p["active"] = False
+        try:
+            PROJECTS_FILE.write_text(json.dumps(projs, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception:
+            pass
+        return {"success": True, "project": new_proj}
+    return {"success": True, "project": existing}
+
+@app.get("/api/projects/{project_id}/files")
+def api_get_project_files(project_id: str):
+    p_dir = WORKSPACE_DIR / project_id
+    if not p_dir.exists():
+        return {"files": []}
+    files_list = []
+    for root, _, files in os.walk(str(p_dir)):
+        for f in files:
+            fp = Path(root) / f
+            rel = fp.relative_to(p_dir).as_posix()
+            files_list.append({
+                "path": rel,
+                "name": f,
+                "size_bytes": fp.stat().st_size,
+                "modified": fp.stat().st_mtime
+            })
+    return {"project_id": project_id, "files": sorted(files_list, key=lambda x: x["path"])}
+
+@app.get("/api/projects/{project_id}/file")
+def api_get_file_content(project_id: str, path: str):
+    p_dir = WORKSPACE_DIR / project_id
+    fp = (p_dir / path).resolve()
+    if not str(fp).startswith(str(p_dir.resolve())):
+        raise HTTPException(status_code=403, detail="Access denied")
+    if not fp.exists() or not fp.is_file():
+        raise HTTPException(status_code=404, detail="File not found")
+    try:
+        content = fp.read_text(encoding="utf-8")
+        return {"path": path, "content": content}
+    except Exception as e:
+        return {"path": path, "error": f"Cannot read as text: {e}"}
+
+@app.post("/api/voice-transcribe")
+async def api_voice_transcribe(file: UploadFile = File(...)):
+    try:
+        audio_bytes = await file.read()
+        import base64
+        import httpx
+
+        api_key = os.getenv("GEMINI_API_KEY", "")
+        mime = file.content_type or "audio/webm"
+        if "mp4" in mime or "m4a" in mime:
+            mime = "audio/mp4"
+        elif "wav" in mime:
+            mime = "audio/wav"
+        else:
+            mime = "audio/webm"
+
+        b64_audio = base64.b64encode(audio_bytes).decode("utf-8")
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
+        payload = {
+            "contents": [
+                {
+                    "parts": [
+                        {"text": "Расшифруй этот аудиофайл. Верни ИСКЛЮЧИТЕЛЬНО точный распознанный текст на русском языке, без кавычек и без вводных слов."},
+                        {
+                            "inline_data": {
+                                "mime_type": mime,
+                                "data": b64_audio
+                            }
+                        }
+                    ]
+                }
+            ]
+        }
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(url, json=payload)
+            if resp.status_code == 200:
+                res_data = resp.json()
+                text = res_data["candidates"][0]["content"]["parts"][0]["text"].strip()
+                return {"success": True, "text": text}
+            else:
+                logger.warning(f"Voice transcribe error {resp.status_code}: {resp.text}")
+                return {"success": False, "error": f"API error: {resp.status_code}"}
+    except Exception as e:
+        logger.error(f"Voice transcribe exception: {e}")
+        return {"success": False, "error": str(e)}
+
 @app.post("/api/terminal")
 def execute_command(req: CommandRequest):
     """Executes bash commands directly on the server."""
     cmd = req.command.strip()
+    target_dir = WORKSPACE_DIR
+    if req.project_id:
+        target_dir = WORKSPACE_DIR / req.project_id.strip()
+        target_dir.mkdir(parents=True, exist_ok=True)
     try:
         res = subprocess.run(
             cmd,
             shell=True,
-            cwd=str(WORKSPACE_DIR),
+            cwd=str(target_dir),
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -152,20 +322,25 @@ def run_autonomous_task(req: TaskRequest):
     task = req.task.strip()
     api_key = req.gemini_key or os.getenv("GEMINI_API_KEY")
 
+    target_dir = WORKSPACE_DIR
+    if req.project_id:
+        target_dir = WORKSPACE_DIR / req.project_id.strip()
+        target_dir.mkdir(parents=True, exist_ok=True)
+
     # If it's a direct terminal command
     if task.startswith("$ ") or task.startswith("bash:"):
         cmd = task.replace("bash:", "").replace("$ ", "").strip()
-        return execute_command(CommandRequest(command=cmd))
+        return execute_command(CommandRequest(command=cmd, project_id=req.project_id))
 
     ensure_antigravity_auth()
 
     # Priority 1: Official Google Antigravity CLI Engine with Google Pro
     if ANTIGRAVITY_TOKEN_FILE.exists():
         try:
-            logger.info("Executing task via official Google Antigravity CLI (Google Pro)...")
+            logger.info(f"Executing task via official Google Antigravity CLI (Google Pro) in {target_dir}...")
             res = subprocess.run(
                 ["agy", "--dangerously-skip-permissions", "-p", task],
-                cwd=str(WORKSPACE_DIR),
+                cwd=str(target_dir),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
@@ -173,13 +348,14 @@ def run_autonomous_task(req: TaskRequest):
             )
             synced_to_cloud = []
             if s3_client:
-                for root, _, files in os.walk(str(WORKSPACE_DIR)):
+                for root, _, files in os.walk(str(target_dir)):
                     for f in files:
                         local_f = Path(root) / f
-                        rel_name = local_f.relative_to(WORKSPACE_DIR).as_posix()
+                        rel_name = local_f.relative_to(target_dir).as_posix()
+                        s3_key = f"projects/{req.project_id}/{rel_name}" if req.project_id else f"workspace/{rel_name}"
                         try:
-                            s3_client.put_object(Bucket=STORJ_BUCKET, Key=rel_name, Body=local_f.read_bytes())
-                            synced_to_cloud.append(rel_name)
+                            s3_client.put_object(Bucket=STORJ_BUCKET, Key=s3_key, Body=local_f.read_bytes())
+                            synced_to_cloud.append(s3_key)
                         except Exception:
                             pass
 

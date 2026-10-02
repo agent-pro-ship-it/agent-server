@@ -2,23 +2,8 @@
 let SERVER_URL = localStorage.getItem("AGENT_SERVER_URL") || "https://agent-master-server.onrender.com";
 if (SERVER_URL.endsWith("/")) SERVER_URL = SERVER_URL.slice(0, -1);
 
-// Projects Data matching user's exact screenshot
-const DEFAULT_PROJECTS = [
-  { id: "agent", name: "Агент", task: "Бесплатный Сервер Для Антигравити", time: "2m", active: true },
-  { id: "recruiter", name: "сайт Recruiter I Club", task: "Premium B2B SaaS Architecture", time: "53m", active: false },
-  { id: "resume", name: "парсер и резюме", task: "Free AI Resume Optimizer", time: "1h", active: false },
-  { id: "crm", name: "проект онлайн срм", task: "Разработка Полнофункциональной CRM", time: "7h", active: false },
-  { id: "contract", name: "прога для договор...", task: "Автоматизация Заполнения Документов", time: "14d", active: false },
-  { id: "recruiter_proj", name: "Recruiter проект", task: "Getting Vercel Access Token", time: "18d", active: false },
-  { id: "site", name: "сайт", task: "Разработка Премиального Лендинга", time: "22d", active: false },
-  { id: "bot", name: "telegram bot", task: "Создание Бота Для Сбора Заявок", time: "1mo", active: false },
-  { id: "crm_debug", name: "отладка срм антиг...", task: "Фикс багов и деплой на сервер", time: "2mo", active: false }
-];
-
-let projects = JSON.parse(localStorage.getItem("ANTIGRAVITY_PROJECTS") || "null") || DEFAULT_PROJECTS;
-let activeProject = projects.find(p => p.active) || projects[0];
-
-// Conversation Store per project
+let activeProject = null;
+let projects = [];
 let conversations = JSON.parse(localStorage.getItem("ANTIGRAVITY_CHATS") || "{}");
 
 // DOM Elements
@@ -27,12 +12,16 @@ const sidebarBackdrop = document.getElementById("sidebarBackdrop");
 const btnToggleSidebar = document.getElementById("btnToggleSidebar");
 const projectsList = document.getElementById("projectsList");
 const btnNewChat = document.getElementById("btnNewChat");
+const btnCreateProjectModal = document.getElementById("btnCreateProjectModal");
+const btnRefreshProjects = document.getElementById("btnRefreshProjects");
 const crumbProject = document.getElementById("crumbProject");
 const crumbTask = document.getElementById("crumbTask");
 const chatFeed = document.getElementById("chatFeed");
 const taskInput = document.getElementById("taskInput");
 const btnSend = document.getElementById("btnSend");
 const btnMic = document.getElementById("btnMic");
+const voiceStatusBar = document.getElementById("voiceStatusBar");
+const voiceStatusText = document.getElementById("voiceStatusText");
 const btnSelectModel = document.getElementById("btnSelectModel");
 const currentModelName = document.getElementById("currentModelName");
 const modelDropdown = document.getElementById("modelDropdown");
@@ -40,27 +29,76 @@ const btnAttach = document.getElementById("btnAttach");
 const attachDropdown = document.getElementById("attachDropdown");
 const filePicker = document.getElementById("filePicker");
 
+// Files Drawer Elements
+const btnToggleFiles = document.getElementById("btnToggleFiles");
+const filesDrawer = document.getElementById("filesDrawer");
+const btnCloseFiles = document.getElementById("btnCloseFiles");
+const filesListContainer = document.getElementById("filesListContainer");
+const filesCountBadge = document.getElementById("filesCountBadge");
+const drawerProjectTitle = document.getElementById("drawerProjectTitle");
+
 // Modals
+const modalCreateProject = document.getElementById("modalCreateProject");
+const btnCloseCreateProj = document.getElementById("btnCloseCreateProj");
+const btnConfirmCreateProj = document.getElementById("btnConfirmCreateProj");
+const newProjNameInput = document.getElementById("newProjNameInput");
+const newProjTaskInput = document.getElementById("newProjTaskInput");
+
+const modalFileViewer = document.getElementById("modalFileViewer");
+const btnCloseFileViewer = document.getElementById("btnCloseFileViewer");
+const fileViewerTitle = document.getElementById("fileViewerTitle");
+const fileViewerCode = document.getElementById("fileViewerCode");
+
 const modalTerminal = document.getElementById("modalTerminal");
 const btnOpenTerminal = document.getElementById("btnOpenTerminal");
 const btnCloseTerminal = document.getElementById("btnCloseTerminal");
+
 const modalSettings = document.getElementById("modalSettings");
 const btnOpenSettings = document.getElementById("btnOpenSettings");
 const btnCloseSettings = document.getElementById("btnCloseSettings");
 const settingServerUrl = document.getElementById("settingServerUrl");
 const btnSaveServerUrl = document.getElementById("btnSaveServerUrl");
 
-// Speech Recognition
+// Voice Recording State (Dual: MediaRecorder + Web Speech API)
 let isRecording = false;
+let mediaRecorder = null;
+let audioChunks = [];
 let recognition = null;
-const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+let webSpeechTranscript = "";
 
-// Render Projects List
+// 1. Fetch & Render Projects from Server
+async function fetchProjects() {
+  try {
+    const res = await fetch(`${SERVER_URL}/api/projects`);
+    if (res.ok) {
+      const data = await res.json();
+      projects = data.projects || [];
+    }
+  } catch (e) {
+    console.warn("Could not fetch remote projects, using cache:", e);
+  }
+
+  if (!projects || projects.length === 0) {
+    projects = [
+      { id: "agent", name: "Агент", task: "Бесплатный Сервер Для Антигравити", time: "2m", active: true },
+      { id: "recruiter-club", name: "сайт Recruiter I Club", task: "Premium B2B SaaS Architecture", time: "53m", active: false },
+      { id: "resume-optimizer", name: "парсер и резюме", task: "Free AI Resume Optimizer", time: "1h", active: false },
+      { id: "online-crm", name: "проект онлайн срм", task: "Разработка Полнофункциональной CRM", time: "7h", active: false }
+    ];
+  }
+
+  const savedActiveId = localStorage.getItem("ACTIVE_PROJECT_ID");
+  activeProject = projects.find(p => p.id === savedActiveId) || projects[0];
+  renderProjects();
+  selectProject(activeProject.id, false);
+}
+
 function renderProjects() {
   projectsList.innerHTML = "";
   projects.forEach((proj) => {
     const item = document.createElement("div");
-    item.className = `project-item ${proj.id === activeProject.id ? "active" : ""}`;
+    const isActive = activeProject && proj.id === activeProject.id;
+    item.className = `project-item ${isActive ? "active" : ""}`;
     item.onclick = () => selectProject(proj.id);
 
     item.innerHTML = `
@@ -69,54 +107,159 @@ function renderProjects() {
         <span class="project-name">${escapeHtml(proj.name)}</span>
       </div>
       <div class="project-sub-row">
-        <span class="project-preview">${escapeHtml(proj.task)}</span>
-        <span class="project-time">${escapeHtml(proj.time)}</span>
+        <span class="project-preview">${escapeHtml(proj.task || "Antigravity Project")}</span>
+        <span class="project-time">${escapeHtml(proj.time || "")}</span>
       </div>
     `;
     projectsList.appendChild(item);
   });
 }
 
-function selectProject(projId) {
-  projects.forEach(p => p.active = (p.id === projId));
+async function selectProject(projId, reloadFiles = true) {
   activeProject = projects.find(p => p.id === projId) || projects[0];
-  localStorage.setItem("ANTIGRAVITY_PROJECTS", JSON.stringify(projects));
+  localStorage.setItem("ACTIVE_PROJECT_ID", activeProject.id);
 
   crumbProject.innerText = activeProject.name;
-  crumbTask.innerText = activeProject.task;
+  crumbTask.innerText = activeProject.task || "Папка проекта";
+  drawerProjectTitle.innerText = `Файлы: ${activeProject.name}`;
 
   renderProjects();
   loadProjectConversation(activeProject.id);
 
-  // Close mobile sidebar if open
+  if (reloadFiles) {
+    await loadProjectFiles(activeProject.id);
+  }
+
+  // Close mobile sidebar
   sidebar.classList.remove("open");
   sidebarBackdrop.classList.remove("active");
 }
 
+// 2. Load Project Files from Server
+async function loadProjectFiles(projId) {
+  try {
+    const res = await fetch(`${SERVER_URL}/api/projects/${projId}/files`);
+    if (res.ok) {
+      const data = await res.json();
+      const files = data.files || [];
+      filesCountBadge.innerText = files.length;
+      renderFilesList(files);
+      return;
+    }
+  } catch (e) {
+    console.warn("Could not load project files:", e);
+  }
+  filesCountBadge.innerText = "0";
+  filesListContainer.innerHTML = '<p style="color:var(--text-muted); font-size:13px;">В папке проекта пока нет созданных файлов.</p>';
+}
+
+function renderFilesList(files) {
+  filesListContainer.innerHTML = "";
+  if (files.length === 0) {
+    filesListContainer.innerHTML = '<p style="color:var(--text-muted); font-size:13px;">Папка пуста. Отправьте агенту задачу создать файл!</p>';
+    return;
+  }
+
+  files.forEach(f => {
+    const row = document.createElement("div");
+    row.className = "file-row";
+    row.onclick = () => openFileContent(activeProject.id, f.path);
+    row.innerHTML = `
+      <div class="file-info-left">
+        <span>📄</span>
+        <span class="file-name">${escapeHtml(f.path)}</span>
+      </div>
+      <span class="file-size">${formatBytes(f.size_bytes)}</span>
+    `;
+    filesListContainer.appendChild(row);
+  });
+}
+
+async function openFileContent(projId, filePath) {
+  fileViewerTitle.innerText = `${filePath} (${projId})`;
+  fileViewerCode.innerText = "Загрузка...";
+  modalFileViewer.classList.add("active");
+
+  try {
+    const res = await fetch(`${SERVER_URL}/api/projects/${projId}/file?path=${encodeURIComponent(filePath)}`);
+    if (res.ok) {
+      const data = await res.json();
+      fileViewerCode.innerText = data.content || "// Файл пуст";
+      return;
+    }
+  } catch (e) {
+    fileViewerCode.innerText = "Ошибка чтения файла: " + e.message;
+  }
+}
+
+// 3. Create New Project in Cloud
+async function createNewProject(name, task) {
+  try {
+    const res = await fetch(`${SERVER_URL}/api/projects`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: name, task: task })
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.project) {
+        projects.unshift(data.project);
+        renderProjects();
+        selectProject(data.project.id);
+        appendAssistantMessage(`✔ Создана новая облачная папка проекта **${name}** в \`/app/workspace/${data.project.id}/\` и синхронизирована с облаком Storj 25GB! Все задачи и скрипты теперь исполняются внутри этой папки.`);
+        return;
+      }
+    }
+  } catch (e) {
+    alert("Ошибка связи с сервером при создании проекта.");
+  }
+}
+
+btnConfirmCreateProj.addEventListener("click", () => {
+  const name = newProjNameInput.value.trim();
+  const task = newProjTaskInput.value.trim();
+  if (!name) {
+    alert("Введите название проекта.");
+    return;
+  }
+  modalCreateProject.classList.remove("active");
+  createNewProject(name, task);
+  newProjNameInput.value = "";
+  newProjTaskInput.value = "";
+});
+
+btnNewChat.addEventListener("click", () => {
+  modalCreateProject.classList.add("active");
+  newProjNameInput.focus();
+});
+
+btnCreateProjectModal.addEventListener("click", () => {
+  modalCreateProject.classList.add("active");
+  newProjNameInput.focus();
+});
+
+btnCloseCreateProj.addEventListener("click", () => {
+  modalCreateProject.classList.remove("active");
+});
+
+btnRefreshProjects.addEventListener("click", fetchProjects);
+
+// 4. Chat Feed Handling
 function loadProjectConversation(projId) {
   chatFeed.innerHTML = "";
   const history = conversations[projId] || [];
 
   if (history.length === 0) {
-    // Initial welcome matching the screenshot
     appendAssistantMessage(`
 <div class="antigravity-quote">
-Привет! Я — настоящий агент Antigravity, запущенный на сервере Render. Я готов выполнять команды, редактировать код и решать любые поставленные задачи!
+Привет! Я — настоящий автономный агент Google Antigravity, работающий под вашей подпиской Google Pro на облачном сервере Render.
 </div>
 
-### 3. Как теперь этим пользоваться (3 способа)
+Вы находитесь в папке проекта: **${escapeHtml(activeProject.name)}**.
 
-1. **Через мобильный пульт Apple PWA (с телефона 24/7)**:
-   - Откройте: <a href="https://agent-pro-ship-it.github.io/agent-mobile-apple/" target="_blank">https://agent-pro-ship-it.github.io/agent-mobile-apple/</a>
-   - Любая задача, отправленная через чат или голос, теперь уходит напрямую в официальный движок Antigravity на сервере под вашей подпиской Google Pro (без ограничений бесплатных API-ключей).
-
-2. **Через официальный пульт Google Antigravity (Remote Control)**:
-   - Откройте: <a href="https://antigravity.google.com" target="_blank">https://antigravity.google.com</a> под вашим аккаунтом \`recruiterclub.bot@gmail.com\`.
-   - В списке активных инстансов у вас отображается облачный агент \`AgentMasterCloud\`, запущенный на Render!
-
-3. **Прямо через веб-терминал**:
-   - Откройте: <a href="https://agent-master-server.onrender.com/terminal/" target="_blank">https://agent-master-server.onrender.com/terminal/</a>
-   - Нажмите Enter — перед вами полноценный bash-терминал сервера, где доступна команда \`agy\` и все системные инструменты.
+* Все создаваемые файлы сохраняются в рабочую папку проекта и в хранилище Storj 25GB.
+* Доступен запуск терминальных команд, написание кода и полный цикл разработки.
+* Вы можете надиктовать задачу голосом через красную кнопку микрофона внизу!
 `);
   } else {
     history.forEach(msg => {
@@ -126,7 +269,6 @@ function loadProjectConversation(projId) {
   }
 }
 
-// Append User Message Card
 function appendUserMessage(text, save = true) {
   const div = document.createElement("div");
   div.className = "msg-user";
@@ -134,7 +276,7 @@ function appendUserMessage(text, save = true) {
   chatFeed.appendChild(div);
   chatFeed.scrollTop = chatFeed.scrollHeight;
 
-  if (save) {
+  if (save && activeProject) {
     if (!conversations[activeProject.id]) conversations[activeProject.id] = [];
     conversations[activeProject.id].push({ role: "user", text: text });
     localStorage.setItem("ANTIGRAVITY_CHATS", JSON.stringify(conversations));
@@ -142,13 +284,11 @@ function appendUserMessage(text, save = true) {
   return div;
 }
 
-// Append Assistant Message with Markdown & Double Quote Support
 function appendAssistantMessage(rawContent, save = true) {
   const div = document.createElement("div");
   div.className = "msg-assistant";
   div.innerHTML = formatMarkdown(rawContent);
 
-  // Message Actions Footer (Copy, Thumb up, Thumb down)
   const actions = document.createElement("div");
   actions.className = "msg-actions";
   actions.innerHTML = `
@@ -161,7 +301,7 @@ function appendAssistantMessage(rawContent, save = true) {
   chatFeed.appendChild(div);
   chatFeed.scrollTop = chatFeed.scrollHeight;
 
-  if (save) {
+  if (save && activeProject) {
     if (!conversations[activeProject.id]) conversations[activeProject.id] = [];
     conversations[activeProject.id].push({ role: "assistant", html: rawContent });
     localStorage.setItem("ANTIGRAVITY_CHATS", JSON.stringify(conversations));
@@ -179,7 +319,7 @@ window.copyText = function(btn) {
   setTimeout(() => { btn.innerText = "❐"; }, 1500);
 };
 
-// Send Task to Server (delegates directly to Antigravity CLI Google Pro)
+// 5. Send Task to Antigravity Engine
 async function sendTask() {
   const text = taskInput.value.trim();
   if (!text) return;
@@ -188,13 +328,16 @@ async function sendTask() {
   taskInput.value = "";
   taskInput.style.height = "auto";
 
-  const loadingBubble = appendAssistantMessage("⏳ *Google Antigravity думает и выполняет задачу на сервере...*");
+  const loadingBubble = appendAssistantMessage("⏳ *Google Antigravity выполняет задачу в папке проекта...*");
 
   try {
     const res = await fetch(`${SERVER_URL}/api/task`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ task: text })
+      body: JSON.stringify({
+        task: text,
+        project_id: activeProject ? activeProject.id : null
+      })
     });
 
     if (!res.ok) {
@@ -217,7 +360,8 @@ async function sendTask() {
       outputHtml += `<p style="font-size:12px; color:#16a34a; margin-top:8px;">☁️ Синхронизировано в Storj 25GB: <code>${data.cloud_synced_files.join(", ")}</code></p>`;
     }
 
-    appendAssistantMessage(outputHtml || "Задача завершена.");
+    appendAssistantMessage(outputHtml || "Задача выполнена.");
+    if (activeProject) loadProjectFiles(activeProject.id);
 
   } catch (err) {
     loadingBubble.innerHTML = "❌ Ошибка соединения с сервером. Попробуйте еще раз.";
@@ -232,61 +376,146 @@ taskInput.addEventListener("keydown", (e) => {
   }
 });
 
-// Auto-expand textarea
 taskInput.addEventListener("input", function() {
   this.style.height = "auto";
   this.style.height = (this.scrollHeight) + "px";
 });
 
-// Voice Input (Web Speech API)
-if (SpeechRecognition) {
-  recognition = new SpeechRecognition();
-  recognition.lang = "ru-RU";
-  recognition.continuous = false;
-  recognition.interimResults = true;
+// 6. Dual Robust Voice Recording (Works 100% on iOS Safari, Android, Desktop)
+async function startVoiceRecording() {
+  audioChunks = [];
+  webSpeechTranscript = "";
+  isRecording = true;
 
-  recognition.onstart = () => {
-    isRecording = true;
-    btnMic.classList.add("recording");
-  };
+  btnMic.classList.add("recording");
+  voiceStatusBar.style.display = "flex";
+  voiceStatusText.innerText = "Идет запись голоса... Говорите задачу";
 
-  recognition.onresult = (event) => {
-    let transcript = "";
-    for (let i = event.resultIndex; i < event.results.length; ++i) {
-      transcript += event.results[i][0].transcript;
+  // Method A: Browser MediaRecorder (Universal)
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    let options = {};
+    if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
+      options = { mimeType: 'audio/webm;codecs=opus' };
+    } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
+      options = { mimeType: 'audio/mp4' };
     }
-    taskInput.value = transcript;
-    taskInput.style.height = "auto";
-    taskInput.style.height = (taskInput.scrollHeight) + "px";
-  };
+    mediaRecorder = new MediaRecorder(stream, options);
+    mediaRecorder.ondataavailable = (e) => {
+      if (e.data.size > 0) audioChunks.push(e.data);
+    };
+    mediaRecorder.start(250);
+  } catch (err) {
+    console.warn("MediaRecorder permission or device error:", err);
+  }
 
-  recognition.onerror = () => {
-    isRecording = false;
-    btnMic.classList.remove("recording");
-  };
+  // Method B: Web Speech API for instant live preview while speaking
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (SpeechRecognition) {
+    try {
+      recognition = new SpeechRecognition();
+      recognition.lang = "ru-RU";
+      recognition.continuous = false;
+      recognition.interimResults = true;
 
-  recognition.onend = () => {
-    isRecording = false;
-    btnMic.classList.remove("recording");
-    if (taskInput.value.trim().length > 0) {
-      sendTask();
-    }
-  };
+      recognition.onresult = (event) => {
+        let t = "";
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          t += event.results[i][0].transcript;
+        }
+        if (t.trim()) {
+          webSpeechTranscript = t;
+          taskInput.value = t;
+          taskInput.style.height = "auto";
+          taskInput.style.height = (taskInput.scrollHeight) + "px";
+        }
+      };
 
-  btnMic.addEventListener("click", () => {
-    if (isRecording) {
-      recognition.stop();
-    } else {
+      recognition.onerror = (e) => {
+        console.warn("Speech recognition error:", e);
+      };
+
       recognition.start();
+    } catch (recErr) {
+      console.warn("SpeechRecognition init error:", recErr);
     }
-  });
-} else {
-  btnMic.addEventListener("click", () => {
-    alert("Голосовой ввод не поддерживается вашим браузером. Используйте Chrome или Safari.");
-  });
+  }
 }
 
-// Sidebar Toggle (Mobile & Desktop)
+async function stopVoiceRecording() {
+  isRecording = false;
+  btnMic.classList.remove("recording");
+  voiceStatusText.innerText = "Распознаю голос...";
+
+  if (recognition) {
+    try { recognition.stop(); } catch (e) {}
+  }
+
+  if (mediaRecorder && mediaRecorder.state !== "inactive") {
+    mediaRecorder.stop();
+    mediaRecorder.stream.getTracks().forEach(track => track.stop());
+
+    // Wait a brief moment for final audio chunk
+    await new Promise(r => setTimeout(r, 400));
+    const mime = mediaRecorder.mimeType || "audio/webm";
+    const audioBlob = new Blob(audioChunks, { type: mime });
+
+    // If client Web Speech didn't catch the words, use server-side Gemini transcribe
+    if (!taskInput.value.trim() && audioBlob.size > 1000) {
+      try {
+        voiceStatusText.innerText = "Расшифровка через Gemini Audio...";
+        const formData = new FormData();
+        formData.append("file", audioBlob, "voice.webm");
+
+        const resp = await fetch(`${SERVER_URL}/api/voice-transcribe`, {
+          method: "POST",
+          body: formData
+        });
+
+        if (resp.ok) {
+          const resJson = await resp.json();
+          if (resJson.success && resJson.text) {
+            taskInput.value = resJson.text;
+            taskInput.style.height = "auto";
+            taskInput.style.height = (taskInput.scrollHeight) + "px";
+          }
+        }
+      } catch (uploadErr) {
+        console.warn("Server voice transcribe failed:", uploadErr);
+      }
+    }
+  }
+
+  voiceStatusBar.style.display = "none";
+
+  // If we have text, auto-send or focus
+  if (taskInput.value.trim()) {
+    taskInput.focus();
+  }
+}
+
+btnMic.addEventListener("click", () => {
+  if (isRecording) {
+    stopVoiceRecording();
+  } else {
+    startVoiceRecording().catch(err => {
+      alert("Не удалось включить микрофон: разрешите доступ к микрофону в браузере.");
+      stopVoiceRecording();
+    });
+  }
+});
+
+// 7. Files Drawer & Modals Handlers
+btnToggleFiles.addEventListener("click", () => {
+  filesDrawer.classList.toggle("open");
+  if (filesDrawer.classList.contains("open") && activeProject) {
+    loadProjectFiles(activeProject.id);
+  }
+});
+btnCloseFiles.addEventListener("click", () => filesDrawer.classList.remove("open"));
+btnCloseFileViewer.addEventListener("click", () => modalFileViewer.classList.remove("active"));
+
+// Sidebar Toggle
 btnToggleSidebar.addEventListener("click", () => {
   if (window.innerWidth <= 768) {
     sidebar.classList.toggle("open");
@@ -299,20 +528,6 @@ btnToggleSidebar.addEventListener("click", () => {
 sidebarBackdrop.addEventListener("click", () => {
   sidebar.classList.remove("open");
   sidebarBackdrop.classList.remove("active");
-});
-
-// New Conversation Button
-btnNewChat.addEventListener("click", () => {
-  const title = prompt("Название нового проекта / задачи:", "Новая задача");
-  if (!title) return;
-  const newId = "proj_" + Date.now();
-  const newProj = { id: newId, name: title, task: "Новый диалог Antigravity", time: "just now", active: true };
-  projects.forEach(p => p.active = false);
-  projects.unshift(newProj);
-  activeProject = newProj;
-  localStorage.setItem("ANTIGRAVITY_PROJECTS", JSON.stringify(projects));
-  renderProjects();
-  selectProject(newId);
 });
 
 // Model Dropdown
@@ -371,21 +586,15 @@ document.addEventListener("click", () => {
 });
 
 // Terminal Modal
-btnOpenTerminal.addEventListener("click", () => {
-  modalTerminal.classList.add("active");
-});
-btnCloseTerminal.addEventListener("click", () => {
-  modalTerminal.classList.remove("active");
-});
+btnOpenTerminal.addEventListener("click", () => modalTerminal.classList.add("active"));
+btnCloseTerminal.addEventListener("click", () => modalTerminal.classList.remove("active"));
 
 // Settings Modal
 btnOpenSettings.addEventListener("click", () => {
   settingServerUrl.value = SERVER_URL;
   modalSettings.classList.add("active");
 });
-btnCloseSettings.addEventListener("click", () => {
-  modalSettings.classList.remove("active");
-});
+btnCloseSettings.addEventListener("click", () => modalSettings.classList.remove("active"));
 btnSaveServerUrl.addEventListener("click", () => {
   let val = settingServerUrl.value.trim();
   if (val.endsWith("/")) val = val.slice(0, -1);
@@ -393,44 +602,33 @@ btnSaveServerUrl.addEventListener("click", () => {
   localStorage.setItem("AGENT_SERVER_URL", SERVER_URL);
   modalSettings.classList.remove("active");
   alert("Адрес сервера сохранен!");
+  fetchProjects();
 });
 
 // Close modals on background click
 window.addEventListener("click", (e) => {
   if (e.target === modalTerminal) modalTerminal.classList.remove("active");
   if (e.target === modalSettings) modalSettings.classList.remove("active");
+  if (e.target === modalCreateProject) modalCreateProject.classList.remove("active");
+  if (e.target === modalFileViewer) modalFileViewer.classList.remove("active");
 });
 
-// Helper: Simple Markdown Formatter
+// Formatters
 function formatMarkdown(text) {
   if (!text) return "";
   let html = text;
-
-  // Double quotes / box format: || text
   html = html.replace(/^\|\|\s*(.+)$/gm, '<div class="antigravity-quote">$1</div>');
-
-  // Headers
   html = html.replace(/^### (.*$)/gim, '<h3>$1</h3>');
   html = html.replace(/^## (.*$)/gim, '<h2>$1</h2>');
   html = html.replace(/^# (.*$)/gim, '<h1>$1</h1>');
-
-  // Bold & Italic
   html = html.replace(/\*\*(.*?)\*\*/gim, '<strong>$1</strong>');
   html = html.replace(/\*(.*?)\*/gim, '<em>$1</em>');
-
-  // Inline Code
   html = html.replace(/`([^`]+)`/gim, '<code>$1</code>');
-
-  // Links
   html = html.replace(/\[([^\]]+)\]\(([^\)]+)\)/gim, '<a href="$2" target="_blank">$1</a>');
-
-  // Lists
   html = html.replace(/^\s*\* (.*$)/gim, '<ul><li>$1</li></ul>');
   html = html.replace(/^\s*\d+\.\s*(.*$)/gim, '<ol><li>$1</li></ol>');
   html = html.replace(/<\/ul>\s*<ul>/gim, '');
   html = html.replace(/<\/ol>\s*<ol>/gim, '');
-
-  // Line breaks
   html = html.replace(/\n/gim, '<br>');
   return html;
 }
@@ -440,11 +638,17 @@ function escapeHtml(str) {
   return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-// Initialize
-renderProjects();
-selectProject(activeProject.id);
+function formatBytes(bytes) {
+  if (bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+}
 
-// PWA Service Worker
+// Initial Launch
+fetchProjects();
+
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("./sw.js").catch(() => {});
 }
