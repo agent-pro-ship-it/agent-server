@@ -11,7 +11,7 @@ import boto3
 from botocore.config import Config
 from fastapi import FastAPI, Request, Form, Header, HTTPException, UploadFile, File, WebSocket, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
@@ -382,76 +382,136 @@ def start_remote_control():
     except Exception as e:
         return {"success": False, "error": str(e)}
 
-# Background daemon for ttyd
-ttyd_process = None
+TERMINAL_PAGE_HTML = """<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>Antigravity Cloud Terminal</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css" />
+  <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; padding: 0; width: 100%; height: 100%;
+      background: #000; overflow: hidden;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro", "SF Mono", Menlo, monospace;
+    }
+    #terminal-container { width: 100%; height: 100%; padding: 6px; }
+  </style>
+</head>
+<body>
+  <div id="terminal-container"></div>
+  <script>
+    const term = new Terminal({
+      cursorBlink: true,
+      fontSize: 15,
+      fontFamily: 'SF Mono, Menlo, Monaco, Consolas, "Courier New", monospace',
+      theme: {
+        background: '#000000',
+        foreground: '#f5f5f7',
+        cursor: '#30d158'
+      }
+    });
+    const fitAddon = new FitAddon.FitAddon();
+    term.loadAddon(fitAddon);
+    term.open(document.getElementById('terminal-container'));
+    fitAddon.fit();
+    window.addEventListener('resize', () => fitAddon.fit());
 
-@app.on_event("startup")
-def startup_event():
-    global ttyd_process
-    try:
-        ttyd_process = subprocess.Popen(
-            ["ttyd", "-b", "/terminal", "-p", "7681", "-W", "-t", "fontSize=15", "bash"],
-            cwd=str(WORKSPACE_DIR)
-        )
-        logger.info("Started ttyd web terminal daemon on port 7681")
-    except Exception as e:
-        logger.warning(f"Failed to start ttyd: {e}")
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${protocol}//${window.location.host}/terminal/ws`;
+    const socket = new WebSocket(wsUrl);
 
-@app.on_event("shutdown")
-def shutdown_event():
-    global ttyd_process
-    if ttyd_process:
+    socket.onopen = () => {
+      term.write('\\r\\n\\x1b[32m✔ Подключено к облачному серверу Antigravity!\\x1b[0m\\r\\n');
+      term.write('\\x1b[90mНапишите agy и нажмите Enter для запуска агента.\\x1b[0m\\r\\n\\r\\n');
+    };
+
+    socket.onmessage = (event) => {
+      term.write(event.data);
+    };
+
+    term.onData((data) => {
+      if (socket.readyState === WebSocket.OPEN) {
+        socket.send(data);
+      }
+    });
+
+    socket.onclose = () => {
+      term.write('\\r\\n\\x1b[31m[Сессия завершена. Обновите страницу]\\x1b[0m\\r\\n');
+    };
+  </script>
+</body>
+</html>
+"""
+
+@app.get("/terminal", response_class=HTMLResponse)
+@app.get("/terminal/", response_class=HTMLResponse)
+def get_terminal_page():
+    return HTMLResponse(content=TERMINAL_PAGE_HTML)
+
+@app.websocket("/terminal/ws")
+async def terminal_websocket(websocket: WebSocket):
+    await websocket.accept()
+    import pty
+    import fcntl
+    import asyncio
+
+    master, slave = pty.openpty()
+
+    # Set non-blocking on master
+    flags = fcntl.fcntl(master, fcntl.F_GETFL)
+    fcntl.fcntl(master, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+
+    env = dict(os.environ)
+    env["TERM"] = "xterm-256color"
+    env["COLORTERM"] = "truecolor"
+
+    proc = subprocess.Popen(
+        ["/bin/bash"],
+        preexec_fn=os.setsid,
+        stdin=slave,
+        stdout=slave,
+        stderr=slave,
+        cwd=str(WORKSPACE_DIR),
+        env=env
+    )
+    os.close(slave)
+
+    async def pty_read_loop():
         try:
-            ttyd_process.terminate()
+            while True:
+                await asyncio.sleep(0.015)
+                try:
+                    data = os.read(master, 8192)
+                    if data:
+                        await websocket.send_text(data.decode("utf-8", errors="replace"))
+                except (BlockingIOError, InterruptedError):
+                    continue
+                except Exception:
+                    break
         except Exception:
             pass
 
-@app.websocket("/terminal/ws")
-async def terminal_websocket(client_ws: WebSocket):
-    await client_ws.accept()
-    import websockets
-    import asyncio
-    async with websockets.connect("ws://127.0.0.1:7681/terminal/ws") as server_ws:
-        async def forward_to_server():
-            try:
-                while True:
-                    data = await client_ws.receive()
-                    if "text" in data:
-                        await server_ws.send(data["text"])
-                    elif "bytes" in data:
-                        await server_ws.send(data["bytes"])
-            except Exception:
-                pass
-
-        async def forward_to_client():
-            try:
-                while True:
-                    msg = await server_ws.recv()
-                    if isinstance(msg, str):
-                        await client_ws.send_text(msg)
-                    else:
-                        await client_ws.send_bytes(msg)
-            except Exception:
-                pass
-
-        await asyncio.gather(forward_to_server(), forward_to_client())
-
-@app.get("/terminal")
-@app.get("/terminal/{full_path:path}")
-async def terminal_http_proxy(full_path: str = ""):
-    import httpx
-    from fastapi import Response
-    target_url = f"http://127.0.0.1:7681/terminal/{full_path}"
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    async def ws_read_loop():
         try:
-            resp = await client.get(target_url)
-            return Response(
-                content=resp.content,
-                status_code=resp.status_code,
-                media_type=resp.headers.get("content-type")
-            )
-        except Exception as e:
-            return Response(content=f"Терминал запускается, обновите страницу через 3 секунды... ({e})", status_code=503)
+            while True:
+                msg = await websocket.receive_text()
+                if msg:
+                    os.write(master, msg.encode("utf-8"))
+        except Exception:
+            pass
+
+    try:
+        await asyncio.gather(pty_read_loop(), ws_read_loop())
+    finally:
+        try:
+            proc.terminate()
+            os.close(master)
+        except Exception:
+            pass
 
 # Standalone UI endpoint if accessed directly
 @app.get("/")
