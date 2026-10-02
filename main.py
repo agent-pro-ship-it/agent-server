@@ -256,7 +256,7 @@ async def api_voice_transcribe(file: UploadFile = File(...)):
             mime = "audio/webm"
 
         b64_audio = base64.b64encode(audio_bytes).decode("utf-8")
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent?key={api_key}"
         payload = {
             "contents": [
                 {
