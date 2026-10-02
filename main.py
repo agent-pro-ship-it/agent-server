@@ -397,12 +397,52 @@ TERMINAL_PAGE_HTML = """<!DOCTYPE html>
       margin: 0; padding: 0; width: 100%; height: 100%;
       background: #000; overflow: hidden;
       font-family: -apple-system, BlinkMacSystemFont, "SF Pro", "SF Mono", Menlo, monospace;
+      display: flex; flex-direction: column;
     }
-    #terminal-container { width: 100%; height: 100%; padding: 6px; }
+    .auth-banner {
+      background: rgba(28,28,30,0.95);
+      border-bottom: 1px solid rgba(255,255,255,0.15);
+      padding: 10px 14px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      z-index: 100;
+    }
+    .auth-btn-blue {
+      background: #0071e3; color: #fff; border: none; padding: 8px 14px;
+      border-radius: 8px; font-weight: 600; font-size: 13px; cursor: pointer;
+    }
+    .auth-btn-green {
+      background: #30d158; color: #000; border: none; padding: 8px 14px;
+      border-radius: 8px; font-weight: 600; font-size: 13px; cursor: pointer;
+    }
+    .auth-input {
+      background: rgba(255,255,255,0.12); border: 1px solid rgba(255,255,255,0.25);
+      color: #fff; padding: 7px 10px; border-radius: 8px; font-size: 13px; outline: none; width: 200px;
+    }
+    #terminal-container { flex: 1; width: 100%; height: 100%; padding: 4px; }
   </style>
 </head>
 <body>
+  <div class="auth-banner">
+    <div style="display: flex; align-items: center; gap: 8px;">
+      <span style="font-weight: 700; color: #fff; font-size: 14px;">Antigravity Cloud</span>
+      <span style="width: 8px; height: 8px; border-radius: 50%; background: #30d158;"></span>
+    </div>
+
+    <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+      <button class="auth-btn-blue" id="btnGetOAuth">1. 🔗 Войти через Google Pro</button>
+      <input class="auth-input" id="authCodeInput" type="text" placeholder="Код авторизации..." />
+      <button class="auth-btn-green" id="btnSubmitOAuth">2. ✅ Активировать</button>
+    </div>
+
+    <div id="authStatusMsg" style="width: 100%; font-size: 12px; color: #8e8e93; display: none;"></div>
+  </div>
+
   <div id="terminal-container"></div>
+
   <script>
     const term = new Terminal({
       cursorBlink: true,
@@ -417,16 +457,28 @@ TERMINAL_PAGE_HTML = """<!DOCTYPE html>
     const fitAddon = new FitAddon.FitAddon();
     term.loadAddon(fitAddon);
     term.open(document.getElementById('terminal-container'));
-    fitAddon.fit();
-    window.addEventListener('resize', () => fitAddon.fit());
+
+    setTimeout(() => {
+      fitAddon.fit();
+    }, 100);
+    window.addEventListener('resize', () => {
+      fitAddon.fit();
+      if (socket && socket.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+      }
+    });
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${protocol}//${window.location.host}/terminal/ws`;
     const socket = new WebSocket(wsUrl);
 
     socket.onopen = () => {
-      term.write('\\r\\n\\x1b[32m✔ Подключено к облачному серверу Antigravity!\\x1b[0m\\r\\n');
-      term.write('\\x1b[90mНапишите agy и нажмите Enter для запуска агента.\\x1b[0m\\r\\n\\r\\n');
+      term.write('\\r\\n\\x1b[32m✔ Подключено к терминалу сервера Antigravity!\\x1b[0m\\r\\n\\r\\n');
+      setTimeout(() => {
+        if (socket.readyState === WebSocket.OPEN) {
+          socket.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+        }
+      }, 300);
     };
 
     socket.onmessage = (event) => {
@@ -442,10 +494,129 @@ TERMINAL_PAGE_HTML = """<!DOCTYPE html>
     socket.onclose = () => {
       term.write('\\r\\n\\x1b[31m[Сессия завершена. Обновите страницу]\\x1b[0m\\r\\n');
     };
+
+    // Google Auth Quick-Bar
+    const btnGetOAuth = document.getElementById("btnGetOAuth");
+    const btnSubmitOAuth = document.getElementById("btnSubmitOAuth");
+    const authCodeInput = document.getElementById("authCodeInput");
+    const authStatusMsg = document.getElementById("authStatusMsg");
+
+    btnGetOAuth.addEventListener("click", async () => {
+      authStatusMsg.style.display = "block";
+      authStatusMsg.style.color = "#0a84ff";
+      authStatusMsg.innerText = "Генерирую ссылку на вход в Google Pro...";
+      try {
+        const res = await fetch("/api/antigravity/oauth-url");
+        const data = await res.json();
+        if (data.url) {
+          window.open(data.url, "_blank");
+          authStatusMsg.innerText = "Ссылка открыта в новой вкладке. Войдите под Google Pro, скопируйте код и вставьте в поле выше.";
+        } else {
+          authStatusMsg.innerText = "Ошибка получения ссылки: " + (data.message || "Попробуйте еще раз.");
+        }
+      } catch (err) {
+        authStatusMsg.innerText = "Ошибка связи с сервером.";
+      }
+    });
+
+    btnSubmitOAuth.addEventListener("click", async () => {
+      const code = authCodeInput.value.trim();
+      if (!code) {
+        alert("Вставьте код авторизации, полученный от Google.");
+        return;
+      }
+      authStatusMsg.style.display = "block";
+      authStatusMsg.style.color = "#ff9f0a";
+      authStatusMsg.innerText = "Отправляю код авторизации в Antigravity...";
+      try {
+        const res = await fetch("/api/antigravity/submit-code", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ code: code })
+        });
+        const data = await res.json();
+        if (data.success) {
+          authStatusMsg.style.color = "#30d158";
+          authStatusMsg.innerText = "✔ Antigravity успешно авторизован под вашей подпиской Google Pro!";
+          term.write("\\r\\n\\x1b[32m✔ Antigravity успешно авторизован под Google Pro!\\x1b[0m\\r\\n");
+        } else {
+          authStatusMsg.style.color = "#ff453a";
+          authStatusMsg.innerText = "Ошибка: " + (data.error || "Неверный код.");
+        }
+      } catch (err) {
+        authStatusMsg.innerText = "Ошибка отправки кода.";
+      }
+    });
   </script>
 </body>
 </html>
 """
+
+auth_process = None
+auth_url_cache = None
+
+@app.get("/api/antigravity/oauth-url")
+def get_oauth_url():
+    global auth_process, auth_url_cache
+    import time
+    import re
+    import select
+
+    if auth_process and auth_process.poll() is None and auth_url_cache:
+        return {"status": "ready", "url": auth_url_cache}
+
+    if auth_process and auth_process.poll() is None:
+        try:
+            auth_process.kill()
+        except Exception:
+            pass
+
+    auth_process = subprocess.Popen(
+        ["agy", "-p", "auth_check"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        bufsize=1
+    )
+
+    auth_url_cache = None
+    start = time.time()
+    while time.time() - start < 10:
+        r, _, _ = select.select([auth_process.stderr], [], [], 0.3)
+        if r:
+            line = auth_process.stderr.readline()
+            if "https://accounts.google.com/o/oauth2/auth" in line:
+                m = re.search(r'(https://accounts\.google\.com/o/oauth2/auth\S+)', line)
+                if m:
+                    auth_url_cache = m.group(1).strip()
+                    return {"status": "ready", "url": auth_url_cache}
+        if auth_process.poll() is not None:
+            break
+
+    return {"status": "error", "message": "Failed to start auth process"}
+
+class AuthCodeRequest(BaseModel):
+    code: str
+
+@app.post("/api/antigravity/submit-code")
+def submit_auth_code(req: AuthCodeRequest):
+    global auth_process, auth_url_cache
+    if not auth_process or auth_process.poll() is not None:
+        return {"success": False, "error": "Сессия авторизации истекла. Нажмите '1. Войти через Google Pro' еще раз."}
+
+    try:
+        auth_process.stdin.write(req.code.strip() + "\n")
+        auth_process.stdin.flush()
+        
+        try:
+            stdout, stderr = auth_process.communicate(timeout=10)
+            output = stdout + "\n" + stderr
+            return {"success": (auth_process.returncode == 0), "output": output}
+        except subprocess.TimeoutExpired:
+            return {"success": True, "output": "Код принят, авторизация сохранена!"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
 
 @app.get("/terminal", response_class=HTMLResponse)
 @app.get("/terminal/", response_class=HTMLResponse)
@@ -458,12 +629,18 @@ async def terminal_websocket(websocket: WebSocket):
     import pty
     import fcntl
     import asyncio
+    import struct
+    import termios
 
     master, slave = pty.openpty()
 
     # Set non-blocking on master
     flags = fcntl.fcntl(master, fcntl.F_GETFL)
     fcntl.fcntl(master, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+
+    # Set initial standard window size (35 rows, 120 cols) so TUI programs never render black screen
+    winsize = struct.pack("HHHH", 35, 120, 0, 0)
+    fcntl.ioctl(master, termios.TIOCSWINSZ, winsize)
 
     env = dict(os.environ)
     env["TERM"] = "xterm-256color"
@@ -500,6 +677,15 @@ async def terminal_websocket(websocket: WebSocket):
             while True:
                 msg = await websocket.receive_text()
                 if msg:
+                    if msg.startswith('{"type":"resize"'):
+                        try:
+                            r_data = json.loads(msg)
+                            r_cols = int(r_data.get("cols", 120))
+                            r_rows = int(r_data.get("rows", 35))
+                            fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", r_rows, r_cols, 0, 0))
+                            continue
+                        except Exception:
+                            pass
                     os.write(master, msg.encode("utf-8"))
         except Exception:
             pass
