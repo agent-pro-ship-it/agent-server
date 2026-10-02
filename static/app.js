@@ -384,9 +384,6 @@ taskInput.addEventListener("input", function() {
 // 6. Direct Fresh Speech Recognition on every tap (Fixes Safari Single-Use Instance Bug)
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 let activeRecognition = null;
-let isRecording = false;
-let mediaRecorder = null;
-let audioChunks = [];
 
 function startListening() {
   if (SpeechRecognition) {
