@@ -1,4 +1,4 @@
-﻿// Configuration & State
+// Configuration & State
 let SERVER_URL = localStorage.getItem(AGENT_SERVER_URL) || window.location.origin;
 if (SERVER_URL.endsWith(/)) SERVER_URL = SERVER_URL.slice(0, -1);
 
@@ -16,11 +16,58 @@ const waveform = document.getElementById(waveform);
 const statusDot = document.getElementById(statusDot);
 const currentAccountLabel = document.getElementById(currentAccountLabel);
 
+// Supabase Client for Google Sign-In
+const SUPABASE_URL = "https://kirgfnqsorlcinsojain.supabase.co";
+const SUPABASE_ANON = "sb_publishable_YG0mZJUajFpigiUFyB9M3w_kWDOvi4g";
+const supabaseClient = (window.supabase && window.supabase.createClient) ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON) : null;
+
+const btnGoogleAuth = document.getElementById("btnGoogleAuth");
+const userAuthEmail = document.getElementById("userAuthEmail");
+
+async function checkAuthSession() {
+  if (!supabaseClient) return;
+  try {
+    const { data: { session } } = await supabaseClient.auth.getSession();
+    if (session && session.user) {
+      const email = session.user.email || "Google User";
+      if (userAuthEmail) userAuthEmail.innerText = email.split('@')[0];
+      if (btnGoogleAuth) btnGoogleAuth.style.borderColor = "var(--apple-green)";
+    } else {
+      if (userAuthEmail) userAuthEmail.innerText = "Войти через Google";
+      if (btnGoogleAuth) btnGoogleAuth.style.borderColor = "var(--card-border)";
+    }
+  } catch (e) {}
+}
+
+if (btnGoogleAuth && supabaseClient) {
+  btnGoogleAuth.addEventListener("click", async () => {
+    const { data: { session } } = await supabaseClient.auth.getSession();
+    if (session) {
+      if (confirm(`Вы вошли как ${session.user.email}. Хотите выйти или сменить Google-аккаунт?`)) {
+        await supabaseClient.auth.signOut();
+        checkAuthSession();
+      }
+    } else {
+      await supabaseClient.auth.signInWithOAuth({
+        provider: "google",
+        options: {
+          redirectTo: window.location.origin + window.location.pathname,
+          queryParams: { prompt: "select_account" }
+        }
+      });
+    }
+  });
+  supabaseClient.auth.onAuthStateChange(() => {
+    checkAuthSession();
+  });
+  checkAuthSession();
+}
+
 // Modals
-const modalAccount = document.getElementById(modalAccount);
-const modalSkills = document.getElementById(modalSkills);
-const modalStorage = document.getElementById(modalStorage);
-const modalSettings = document.getElementById(modalSettings);
+const modalAccount = document.getElementById("modalAccount");
+const modalSkills = document.getElementById("modalSkills");
+const modalStorage = document.getElementById("modalStorage");
+const modalSettings = document.getElementById("modalSettings");
 
 // Register PWA Service Worker
 if (serviceWorker in navigator) {
