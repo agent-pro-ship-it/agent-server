@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>Google Antigravity Cloud</title>
   <link rel="manifest" href="manifest.json">
-  <link rel="stylesheet" href="style.css?v=2.3">
+  <link rel="stylesheet" href="style.css?v=2.4">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -40,6 +40,10 @@
       </div>
 
       <div class="window-right">
+        <button class="btn-live-sparkle" id="btnOpenGeminiLive" title="Голосовой Live-диалог со студийным голосом для обсуждения идей">
+          <span class="live-dot-pulse"></span>
+          <span>✨ Gemini Live</span>
+        </button>
         <button class="win-icon-btn" id="btnThemeToggle" title="Сменить тему (Светлая/Темная)">🌓</button>
         <div class="auth-badge" id="googleProBadge" title="Нажмите для управления аккаунтами Google Pro">
           <span class="pulse-dot"></span>
@@ -528,6 +532,64 @@
 
   <input type="file" id="filePicker" style="display:none;">
 
-  <script src="app.js?v=2.3"></script>
+  <script src="app.js?v=2.4"></script>
+
+  <!-- Gemini Live Voice Brainstorm Modal -->
+  <div class="modal-overlay" id="modalGeminiLive">
+    <div class="modal-container-live">
+      <div class="live-modal-header">
+        <div class="live-header-brand">
+          <span class="live-header-icon">✦</span>
+          <div>
+            <div style="font-weight:700; font-size:14px; color:#fff;">Gemini Live Brainstorm</div>
+            <div style="font-size:11px; color:#a1a1aa;" id="liveActiveModelBadge">Каскад: Gemini 3.1 Flash Lite • Studio Voice</div>
+          </div>
+        </div>
+        <div style="display:flex; align-items:center; gap:10px;">
+          <div class="live-voice-selector" id="liveVoiceName">Edge Natural Studio Voice</div>
+          <button class="modal-close-btn" id="btnCloseGeminiLive">✕</button>
+        </div>
+      </div>
+
+      <div class="live-modal-body">
+        <!-- Glowing Soundwave Plasma Orb -->
+        <div class="live-orb-container">
+          <div class="live-orb" id="liveOrb">
+            <div class="orb-ring ring-1"></div>
+            <div class="orb-ring ring-2"></div>
+            <div class="orb-ring ring-3"></div>
+            <div class="orb-core"></div>
+          </div>
+        </div>
+
+        <div class="live-status-text" id="liveStatusText">Нажмите «Начать диалог» для живого обсуждения идеи</div>
+
+        <!-- Live Subtitles & Dialogue History -->
+        <div class="live-dialog-box" id="liveDialogBox">
+          <div class="live-msg-bubble assistant">
+            👋 Привет! Я готов обсудить любые идеи для проекта. Говорите голосом — я отвечу кратко и по делу!
+          </div>
+        </div>
+      </div>
+
+      <div class="live-modal-footer">
+        <div class="live-controls-row">
+          <button class="btn-live-mic active" id="btnLiveMicToggle" title="Включить / Выключить микрофон">
+            <span id="liveMicIcon">🎙</span>
+            <span id="liveMicLabel">Слушаю вас</span>
+          </button>
+
+          <button class="btn-action-outline" id="btnLiveStopAudio" title="Остановить текущую речь Gemini">
+            ⏹ Молчать
+          </button>
+
+          <button class="btn-transfer-antigravity" id="btnTransferPrompt" title="Завершить обсуждение и перенести ТЗ в окно ввода Antigravity">
+            <span>🚀 Сформировать промпт в Antigravity</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
 </body>
 </html>

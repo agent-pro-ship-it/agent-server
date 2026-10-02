@@ -514,6 +514,144 @@ def api_get_artifacts():
                     pass
     return {"artifacts": artifacts}
 
+
+# ========================================================
+# GEMINI CASCADE ENGINE & LIVE BRAINSTORM BACKEND
+# ========================================================
+import time
+
+CASCADE_MODELS = [
+    "gemini-3.1-flash-lite",
+    "gemini-3.1-flash-lite-preview",
+    "gemini-flash-lite-latest",
+    "gemini-3.5-flash-lite",
+    "gemini-3.5-flash",
+    "gemini-3.6-flash",
+    "gemini-3.7-flash",
+    "gemini-3.8-flash",
+    "gemini-2.5-flash",
+    "gemini-2.5-pro"
+]
+
+model_quota_status = {}  # {model_name: blocked_until_timestamp}
+
+def get_active_gemini_model():
+    now = time.time()
+    for m in CASCADE_MODELS:
+        blocked_until = model_quota_status.get(m, 0)
+        if now > blocked_until:
+            return m
+    # If all blocked, reset and retry from start
+    model_quota_status.clear()
+    return CASCADE_MODELS[0]
+
+class LiveChatRequest(BaseModel):
+    message: str
+    history: Optional[List[Dict[str, str]]] = []
+    gemini_key: Optional[str] = None
+
+class SummarizeTaskRequest(BaseModel):
+    history: List[Dict[str, str]]
+    gemini_key: Optional[str] = None
+
+@app.post("/api/gemini/cascade-chat")
+def api_gemini_cascade_chat(req: LiveChatRequest):
+    """Ultra-fast brainstorming chat with automatic 24h model cascade failover."""
+    import httpx
+    api_key = req.gemini_key or os.getenv("GEMINI_API_KEY", "")
+    if not api_key:
+        raise HTTPException(status_code=400, detail="Gemini API Key required")
+
+    system_instruction = (
+        "Ты — умный и дружелюбный голосовой напарник для брейншторма идей перед кодингом. "
+        "Отвечай КРАТКО (1-2 емких предложения на чистом русском языке), живым человеческим языком без списков и markdown. "
+        "Помогай пользователю развить идею и довести её до четкой технической задачи."
+    )
+
+    contents = []
+    for h in req.history[-6:]:  # Keep recent context
+        role = "user" if h.get("role") == "user" else "model"
+        contents.append({"role": role, "parts": [{"text": h.get("text", "")}]})
+    contents.append({"role": "user", "parts": [{"text": req.message}]})
+
+    now = time.time()
+    last_error = None
+
+    with httpx.Client(timeout=15.0, verify=False) as client:
+        for model_name in CASCADE_MODELS:
+            blocked_until = model_quota_status.get(model_name, 0)
+            if now < blocked_until:
+                continue
+
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
+            payload = {
+                "contents": contents,
+                "systemInstruction": {"parts": [{"text": system_instruction}]},
+                "generationConfig": {
+                    "temperature": 0.7,
+                    "maxOutputTokens": 300
+                }
+            }
+            try:
+                r = client.post(url, json=payload)
+                if r.status_code == 200:
+                    data = r.json()
+                    candidates = data.get("candidates", [])
+                    if candidates and "content" in candidates[0]:
+                        reply = candidates[0]["content"]["parts"][0]["text"].strip()
+                        return {"success": True, "reply": reply, "model_used": model_name}
+                elif r.status_code == 429:
+                    logger.warning(f"Model {model_name} quota 429 hit. Blocking for 6 hours in cascade.")
+                    model_quota_status[model_name] = now + 21600  # 6h block
+                    last_error = f"Quota 429 on {model_name}"
+                else:
+                    logger.warning(f"Model {model_name} returned {r.status_code}: {r.text[:80]}")
+                    last_error = f"Error {r.status_code} on {model_name}"
+            except Exception as e:
+                logger.warning(f"Model {model_name} exception: {e}")
+                last_error = str(e)
+
+    # Fallback to direct simple reply
+    return {
+        "success": False,
+        "reply": "Отличная идея! Можем сразу приступать к её реализации или уточнить детали.",
+        "model_used": "offline_fallback",
+        "error": last_error
+    }
+
+@app.post("/api/gemini/summarize-task")
+def api_gemini_summarize_task(req: SummarizeTaskRequest):
+    """Summarizes live voice brainstorming conversation into a structured Antigravity prompt."""
+    import httpx
+    api_key = req.gemini_key or os.getenv("GEMINI_API_KEY", "")
+    if not api_key:
+        raise HTTPException(status_code=400, detail="Gemini API Key required")
+
+    transcript = "\n".join([f"{h.get('role', 'user')}: {h.get('text', '')}" for h in req.history])
+    prompt = (
+        "Ниже приведен голосовой диалог брейншторма идеи с пользователем:\n"
+        f"{transcript}\n\n"
+        "Сформируй из этого четкий, профессиональный и подробный промпт (техническое задание) для автономного агента Antigravity. "
+        "Опиши цель проекта, архитектуру, стек и ключевые шаги реализации на русском языке. "
+        "Верни ИСКЛЮЧИТЕЛЬНО готовый текст промпта без лишних вступлений."
+    )
+
+    with httpx.Client(timeout=20.0, verify=False) as client:
+        for model_name in CASCADE_MODELS:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
+            try:
+                r = client.post(url, json={"contents": [{"parts": [{"text": prompt}]}]})
+                if r.status_code == 200:
+                    data = r.json()
+                    res_text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+                    return {"success": True, "prompt": res_text, "model": model_name}
+            except Exception:
+                continue
+
+    # Fallback prompt summary
+    last_user_msg = next((h.get('text') for h in reversed(req.history) if h.get('role') == 'user'), 'Новая задача')
+    return {"success": True, "prompt": f"Реализуй проект на основе идеи: {last_user_msg}", "model": "fallback"}
+
 @app.post("/api/terminal")
 def execute_command(req: CommandRequest):
     """Executes bash commands directly on the server."""

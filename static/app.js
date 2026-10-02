@@ -1249,3 +1249,337 @@ window.copyCodeSnippet = function(btn) {
     });
   }
 };
+
+
+// ========================================================
+// GEMINI LIVE VOICE BRAINSTORM CONTROLLER (EDGE STUDIO TTS)
+// ========================================================
+
+const btnOpenGeminiLive = document.getElementById("btnOpenGeminiLive");
+const modalGeminiLive = document.getElementById("modalGeminiLive");
+const btnCloseGeminiLive = document.getElementById("btnCloseGeminiLive");
+const liveOrb = document.getElementById("liveOrb");
+const liveStatusText = document.getElementById("liveStatusText");
+const liveDialogBox = document.getElementById("liveDialogBox");
+const btnLiveMicToggle = document.getElementById("btnLiveMicToggle");
+const btnLiveStopAudio = document.getElementById("btnLiveStopAudio");
+const btnTransferPrompt = document.getElementById("btnTransferPrompt");
+const liveVoiceName = document.getElementById("liveVoiceName");
+const liveActiveModelBadge = document.getElementById("liveActiveModelBadge");
+
+let liveHistory = [];
+let liveIsListening = false;
+let liveSpeechRecognizer = null;
+let liveBestVoice = null;
+let liveSilenceTimer = null;
+let liveCurrentSpeechText = "";
+
+// 1. Voice Detection (Microsoft Edge Natural Studio Voice prioritized)
+function initNaturalVoices() {
+  if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
+  const voices = window.speechSynthesis.getVoices();
+  if (!voices || voices.length === 0) return;
+
+  // Search priority: Edge Natural Dmitry/Svetlana -> any Natural Russian -> Google Russian -> any Russian
+  let selected = voices.find(v => v.name.includes("Natural") && (v.name.includes("Dmitry") || v.name.includes("Svetlana")));
+  if (!selected) selected = voices.find(v => v.name.includes("Natural") && (v.lang.startsWith("ru") || v.name.includes("Russian")));
+  if (!selected) selected = voices.find(v => v.name.includes("Google") && v.lang.startsWith("ru"));
+  if (!selected) selected = voices.find(v => v.lang.startsWith("ru") || v.lang === "ru-RU");
+
+  if (selected) {
+    liveBestVoice = selected;
+    if (liveVoiceName) {
+      liveVoiceName.innerText = `🎙 ${selected.name.replace("Microsoft ", "").replace(" Online (Natural) - Russian (Russia)", " (Edge Natural Studio)")}`;
+    }
+  }
+}
+
+if (typeof window !== "undefined" && "speechSynthesis" in window) {
+  window.speechSynthesis.onvoiceschanged = initNaturalVoices;
+  initNaturalVoices();
+}
+
+// 2. Open / Close Live Modal
+if (btnOpenGeminiLive) {
+  btnOpenGeminiLive.addEventListener("click", () => {
+    initNaturalVoices();
+    modalGeminiLive.classList.add("active");
+    startLiveSession();
+  });
+}
+
+if (btnCloseGeminiLive) {
+  btnCloseGeminiLive.addEventListener("click", () => {
+    stopLiveSession();
+    modalGeminiLive.classList.remove("active");
+  });
+}
+
+function startLiveSession() {
+  liveHistory = [];
+  liveDialogBox.innerHTML = `
+    <div class="live-msg-bubble assistant">
+      👋 Привет! Я слушаю. Расскажите идею для проекта своими словами — я помогу развить её и составить задачу!
+    </div>
+  `;
+  liveStatusText.innerText = "Слушаю вас... Говорите идею";
+  liveOrb.className = "live-orb listening";
+  startLiveListening();
+}
+
+function stopLiveSession() {
+  if ("speechSynthesis" in window) {
+    window.speechSynthesis.cancel();
+  }
+  if (liveSpeechRecognizer) {
+    try { liveSpeechRecognizer.stop(); } catch(e) {}
+    liveSpeechRecognizer = null;
+  }
+  liveIsListening = false;
+  if (liveSilenceTimer) clearTimeout(liveSilenceTimer);
+}
+
+// 3. Live Speech Listening Loop
+function startLiveListening() {
+  const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRec) {
+    liveStatusText.innerText = "Браузер не поддерживает живое распознавание речи.";
+    return;
+  }
+
+  try {
+    if (liveSpeechRecognizer) {
+      try { liveSpeechRecognizer.stop(); } catch(e) {}
+    }
+
+    liveSpeechRecognizer = new SpeechRec();
+    liveSpeechRecognizer.lang = "ru-RU";
+    liveSpeechRecognizer.continuous = true;
+    liveSpeechRecognizer.interimResults = true;
+
+    liveSpeechRecognizer.onstart = () => {
+      liveIsListening = true;
+      if (liveOrb) liveOrb.className = "live-orb listening";
+      if (liveStatusText) liveStatusText.innerText = "🟢 Слушаю вас... Говорите";
+      btnLiveMicToggle.classList.add("active");
+    };
+
+    liveSpeechRecognizer.onresult = (event) => {
+      let interim = "";
+      let final = "";
+      for (let i = 0; i < event.results.length; ++i) {
+        if (event.results[i].isFinal) final += event.results[i][0].transcript + " ";
+        else interim += event.results[i][0].transcript;
+      }
+
+      const text = (final + interim).trim();
+      if (text) {
+        liveCurrentSpeechText = text;
+        liveStatusText.innerText = `«${text}»`;
+
+        // Reset silence timer: user stopped talking for 1.8 seconds -> send to Gemini!
+        if (liveSilenceTimer) clearTimeout(liveSilenceTimer);
+        liveSilenceTimer = setTimeout(() => {
+          if (liveCurrentSpeechText.trim().length > 1) {
+            handleUserLiveUtterance(liveCurrentSpeechText);
+            liveCurrentSpeechText = "";
+          }
+        }, 1800);
+      }
+    };
+
+    liveSpeechRecognizer.onerror = (e) => {
+      console.warn("Live speech error:", e.error);
+      if (e.error === "not-allowed") {
+        liveStatusText.innerText = "Доступ к микрофону заблокирован в браузере.";
+      }
+    };
+
+    liveSpeechRecognizer.onend = () => {
+      // Auto-restart if modal is still active and not speaking
+      if (modalGeminiLive.classList.contains("active") && liveIsListening && !window.speechSynthesis.speaking) {
+        try { liveSpeechRecognizer.start(); } catch(e) {}
+      }
+    };
+
+    liveSpeechRecognizer.start();
+  } catch (err) {
+    console.warn("Live speech start failed:", err);
+  }
+}
+
+// 4. Handle User Utterance -> Send to Gemini Cascade
+async function handleUserLiveUtterance(userText) {
+  if (!userText || !userText.trim()) return;
+
+  // Append user bubble
+  appendLiveBubble("user", userText);
+  liveHistory.push({ role: "user", text: userText });
+
+  // Update Orb to thinking
+  if (liveOrb) liveOrb.className = "live-orb";
+  liveStatusText.innerText = "⏳ Gemini думает...";
+
+  // Pause recognition while Gemini responds
+  if (liveSpeechRecognizer) {
+    try { liveSpeechRecognizer.stop(); } catch(e) {}
+  }
+
+  try {
+    const res = await fetch(`${SERVER_URL}/api/gemini/cascade-chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message: userText,
+        history: liveHistory
+      })
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      const reply = data.reply || "Понял вас! Развиваем эту мысль дальше.";
+      if (data.model_used && liveActiveModelBadge) {
+        liveActiveModelBadge.innerText = `Каскад: ${data.model_used} • Studio Voice`;
+      }
+      appendLiveBubble("assistant", reply);
+      liveHistory.push({ role: "model", text: reply });
+
+      // Speak reply with studio quality voice
+      speakNaturalReply(reply, () => {
+        // Resume listening after speaking
+        if (modalGeminiLive.classList.contains("active")) {
+          liveOrb.className = "live-orb listening";
+          liveStatusText.innerText = "🟢 Слушаю вас... Говорите дальше";
+          startLiveListening();
+        }
+      });
+    } else {
+      liveStatusText.innerText = "Ошибка ответа от Gemini.";
+      startLiveListening();
+    }
+  } catch (err) {
+    liveStatusText.innerText = "Ошибка соединения: " + err.message;
+    startLiveListening();
+  }
+}
+
+function appendLiveBubble(role, text) {
+  if (!liveDialogBox) return;
+  const bubble = document.createElement("div");
+  bubble.className = `live-msg-bubble ${role}`;
+  bubble.innerText = text;
+  liveDialogBox.appendChild(bubble);
+  liveDialogBox.scrollTop = liveDialogBox.scrollHeight;
+}
+
+// 5. Speech Synthesis with Microsoft Natural Voice
+function speakNaturalReply(text, onComplete) {
+  if (typeof window === "undefined" || !("speechSynthesis" in window)) {
+    if (onComplete) onComplete();
+    return;
+  }
+
+  window.speechSynthesis.cancel();
+
+  const cleanText = text.replace(/[*#`_]/g, "").trim();
+  const utter = new SpeechSynthesisUtterance(cleanText);
+  utter.rate = 1.05;
+  utter.pitch = 1.0;
+
+  if (liveBestVoice) {
+    utter.voice = liveBestVoice;
+  }
+
+  if (liveOrb) liveOrb.className = "live-orb speaking";
+  liveStatusText.innerText = "🔊 Gemini говорит...";
+
+  utter.onend = () => {
+    if (onComplete) onComplete();
+  };
+  utter.onerror = () => {
+    if (onComplete) onComplete();
+  };
+
+  window.speechSynthesis.speak(utter);
+}
+
+// 6. Stop Speaking Button
+if (btnLiveStopAudio) {
+  btnLiveStopAudio.addEventListener("click", () => {
+    if ("speechSynthesis" in window) {
+      window.speechSynthesis.cancel();
+    }
+    if (liveOrb) liveOrb.className = "live-orb listening";
+    liveStatusText.innerText = "🟢 Слушаю вас... Говорите";
+    startLiveListening();
+  });
+}
+
+// 7. Toggle Mic in Live
+if (btnLiveMicToggle) {
+  btnLiveMicToggle.addEventListener("click", () => {
+    if (liveIsListening) {
+      if (liveSpeechRecognizer) {
+        try { liveSpeechRecognizer.stop(); } catch(e) {}
+      }
+      liveIsListening = false;
+      btnLiveMicToggle.classList.remove("active");
+      liveStatusText.innerText = "Микрофон отключен (нажмите для включения)";
+      if (liveOrb) liveOrb.className = "live-orb";
+    } else {
+      startLiveListening();
+    }
+  });
+}
+
+// 8. Transfer Finalized Prompt to Antigravity
+if (btnTransferPrompt) {
+  btnTransferPrompt.addEventListener("click", async () => {
+    if (liveHistory.length === 0) {
+      alert("Сначала обсудите идею голосом, чтобы сформировать задачу.");
+      return;
+    }
+
+    btnTransferPrompt.innerText = "⏳ Формирую задачу...";
+    liveStatusText.innerText = "✨ Создаю структурированный промпт для Antigravity...";
+
+    try {
+      const res = await fetch(`${SERVER_URL}/api/gemini/summarize-task`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ history: liveHistory })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        const promptText = data.prompt || "";
+
+        // Stop live session & close modal
+        stopLiveSession();
+        modalGeminiLive.classList.remove("active");
+
+        // Transfer into Antigravity input box!
+        taskInput.value = promptText;
+        taskInput.style.height = "auto";
+        taskInput.style.height = (taskInput.scrollHeight) + "px";
+        taskInput.focus();
+
+        alert("✔ Готовая задача сформирована и перенесена в окно Antigravity! Можете запускать проект.");
+      } else {
+        alert("Не удалось сформировать промпт. Попробуйте еще раз.");
+      }
+    } catch (e) {
+      alert("Ошибка: " + e.message);
+    } finally {
+      btnTransferPrompt.innerHTML = "<span>🚀 Сформировать промпт в Antigravity</span>";
+    }
+  });
+}
+
+// Close Live modal on background click
+window.addEventListener("click", (e) => {
+  if (e.target === modalGeminiLive) {
+    stopLiveSession();
+    modalGeminiLive.classList.remove("active");
+  }
+});
