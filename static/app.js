@@ -381,135 +381,114 @@ taskInput.addEventListener("input", function() {
   this.style.height = (this.scrollHeight) + "px";
 });
 
-// 6. Direct Fresh Speech Recognition on every tap (Fixes Safari Single-Use Instance Bug)
-const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-let activeRecognition = null;
+// 6. Rock-Solid Dual Voice Capture (Hardware getUserMedia + Web Speech API + Gemini AI Server Transcribe)
+let mediaStream = null;
+let speechRecognizer = null;
 
-function startListening() {
+async function startListening() {
+  isRecording = true;
+  btnMic.classList.add("recording");
+  voiceStatusBar.style.display = "flex";
+  voiceStatusText.innerText = "🔴 Запись... Говорите задачу (нажмите еще раз для завершения)";
+  audioChunks = [];
+
+  // Request audio hardware stream directly inside user gesture
+  try {
+    mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    
+    let options = {};
+    if (typeof MediaRecorder !== "undefined") {
+      if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
+        options = { mimeType: 'audio/webm;codecs=opus' };
+      } else if (MediaRecorder.isTypeSupported('audio/webm')) {
+        options = { mimeType: 'audio/webm' };
+      } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
+        options = { mimeType: 'audio/mp4' };
+      }
+      mediaRecorder = new MediaRecorder(mediaStream, options);
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) audioChunks.push(e.data);
+      };
+      mediaRecorder.start(200);
+    }
+  } catch (err) {
+    console.warn("Microphone access denied or error:", err);
+    isRecording = false;
+    btnMic.classList.remove("recording");
+    voiceStatusBar.style.display = "none";
+    alert("Доступ к микрофону заблокирован в браузере.\nПожалуйста, нажмите на значок настроек/замочка слева в адресной строке и включите «Микрофон».");
+    return;
+  }
+
+  // Parallel Web Speech API for real-time live preview typing
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (SpeechRecognition) {
     try {
-      activeRecognition = new SpeechRecognition();
-      activeRecognition.lang = "ru-RU";
-      activeRecognition.continuous = true;
-      activeRecognition.interimResults = true;
-      activeRecognition.maxAlternatives = 1;
+      speechRecognizer = new SpeechRecognition();
+      speechRecognizer.lang = "ru-RU";
+      speechRecognizer.continuous = true;
+      speechRecognizer.interimResults = true;
 
-      activeRecognition.onstart = () => {
-        isRecording = true;
-        btnMic.classList.add("recording");
-        voiceStatusBar.style.display = "flex";
-        voiceStatusText.innerText = "🔴 Говорите задачу... (микрофон активен)";
-      };
-
-      activeRecognition.onresult = (event) => {
+      speechRecognizer.onresult = (event) => {
         let interim = "";
         let final = "";
         for (let i = 0; i < event.results.length; ++i) {
-          if (event.results[i].isFinal) {
-            final += event.results[i][0].transcript + " ";
-          } else {
-            interim += event.results[i][0].transcript;
-          }
+          if (event.results[i].isFinal) final += event.results[i][0].transcript + " ";
+          else interim += event.results[i][0].transcript;
         }
-        const current = (final + interim).trim();
-        if (current) {
-          taskInput.value = current;
+        const text = (final + interim).trim();
+        if (text) {
+          taskInput.value = text;
           taskInput.style.height = "auto";
           taskInput.style.height = (taskInput.scrollHeight) + "px";
-          voiceStatusText.innerText = "🎙 " + current;
+          voiceStatusText.innerText = "🎙 " + text;
         }
       };
 
-      activeRecognition.onerror = (e) => {
-        console.warn("SpeechRecognition error:", e.error);
-        if (e.error === "not-allowed" || e.error === "service-not-allowed") {
-          isRecording = false;
-          btnMic.classList.remove("recording");
-          voiceStatusBar.style.display = "none";
-          alert("Доступ к микрофону заблокирован в настройках браузера. Разрешите микрофон для этого сайта.");
-        } else if (e.error === "no-speech") {
-          // ignore silence
-        } else {
-          stopListening();
-          startMediaRecorderFallback();
-        }
+      speechRecognizer.onerror = (e) => {
+        console.warn("SpeechRecognition preview error (MediaRecorder still active):", e.error);
       };
 
-      activeRecognition.onend = () => {
-        isRecording = false;
-        btnMic.classList.remove("recording");
-        voiceStatusBar.style.display = "none";
-        if (taskInput.value.trim()) {
-          taskInput.focus();
-        }
-      };
-
-      // Direct synchronous start inside the user click!
-      activeRecognition.start();
-      return;
-    } catch (err) {
-      console.warn("SpeechRecognition start exception, using fallback:", err);
+      speechRecognizer.start();
+    } catch (e) {
+      console.warn("SpeechRecognition start exception:", e);
     }
   }
-
-  startMediaRecorderFallback();
 }
 
-function stopListening() {
+async function stopListening() {
   isRecording = false;
   btnMic.classList.remove("recording");
-  voiceStatusBar.style.display = "none";
+  voiceStatusText.innerText = "⏳ Распознавание речи...";
 
-  if (activeRecognition) {
-    try { activeRecognition.stop(); } catch(e) {}
-    activeRecognition = null;
+  if (speechRecognizer) {
+    try { speechRecognizer.stop(); } catch(e) {}
+    speechRecognizer = null;
   }
-
-  if (mediaRecorder && mediaRecorder.state !== "inactive") {
-    stopMediaRecorderFallback();
-  }
-}
-
-async function startMediaRecorderFallback() {
-  audioChunks = [];
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    let options = {};
-    if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
-      options = { mimeType: 'audio/webm;codecs=opus' };
-    } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
-      options = { mimeType: 'audio/mp4' };
-    }
-    mediaRecorder = new MediaRecorder(stream, options);
-    mediaRecorder.ondataavailable = (e) => {
-      if (e.data.size > 0) audioChunks.push(e.data);
-    };
-    mediaRecorder.start(250);
-    isRecording = true;
-    btnMic.classList.add("recording");
-    voiceStatusBar.style.display = "flex";
-    voiceStatusText.innerText = "🔴 Запись аудио... Говорите";
-  } catch (err) {
-    alert("Не удалось включить микрофон: разрешите доступ к микрофону в браузере.");
-    btnMic.classList.remove("recording");
-    voiceStatusBar.style.display = "none";
-  }
-}
-
-async function stopMediaRecorderFallback() {
-  isRecording = false;
-  btnMic.classList.remove("recording");
-  voiceStatusText.innerText = "Расшифровка через сервер...";
 
   if (mediaRecorder && mediaRecorder.state !== "inactive") {
     mediaRecorder.stop();
-    mediaRecorder.stream.getTracks().forEach(track => track.stop());
+  }
+  if (mediaStream) {
+    mediaStream.getTracks().forEach(track => track.stop());
+    mediaStream = null;
+  }
 
-    await new Promise(r => setTimeout(r, 400));
-    const mime = mediaRecorder.mimeType || "audio/webm";
+  await new Promise(r => setTimeout(r, 400));
+
+  // If live recognition already filled taskInput, we are done
+  if (taskInput.value.trim().length > 0) {
+    voiceStatusBar.style.display = "none";
+    taskInput.focus();
+    return;
+  }
+
+  // Otherwise fallback to cloud transcription via Gemini AI
+  if (audioChunks.length > 0) {
+    const mime = (mediaRecorder && mediaRecorder.mimeType) || "audio/webm";
     const audioBlob = new Blob(audioChunks, { type: mime });
 
-    if (audioBlob.size > 1000) {
+    if (audioBlob.size > 500) {
       try {
         const formData = new FormData();
         formData.append("file", audioBlob, "voice.webm");
@@ -519,17 +498,19 @@ async function stopMediaRecorderFallback() {
         });
         if (resp.ok) {
           const resJson = await resp.json();
-          if (resJson.success && resJson.text) {
+          if (resJson.success && resJson.text && resJson.text !== "NONE") {
             taskInput.value = resJson.text;
             taskInput.style.height = "auto";
             taskInput.style.height = (taskInput.scrollHeight) + "px";
+            taskInput.focus();
           }
         }
-      } catch (e) {
-        console.warn("Fallback transcribe error:", e);
+      } catch (err) {
+        console.warn("Cloud transcribe error:", err);
       }
     }
   }
+
   voiceStatusBar.style.display = "none";
 }
 
