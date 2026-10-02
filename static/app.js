@@ -381,72 +381,97 @@ taskInput.addEventListener("input", function() {
   this.style.height = (this.scrollHeight) + "px";
 });
 
-// 6. Direct Synchronous Voice Recording (Web Speech API + MediaRecorder Fallback)
+// 6. Direct Fresh Speech Recognition on every tap (Fixes Safari Single-Use Instance Bug)
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-let recognition = null;
+let activeRecognition = null;
 let isRecording = false;
 let mediaRecorder = null;
 let audioChunks = [];
 
-function setupSpeechRecognition() {
-  if (!SpeechRecognition) return null;
-  const rec = new SpeechRecognition();
-  rec.lang = "ru-RU";
-  rec.continuous = true;
-  rec.interimResults = true;
-  rec.maxAlternatives = 1;
+function startListening() {
+  if (SpeechRecognition) {
+    try {
+      activeRecognition = new SpeechRecognition();
+      activeRecognition.lang = "ru-RU";
+      activeRecognition.continuous = true;
+      activeRecognition.interimResults = true;
+      activeRecognition.maxAlternatives = 1;
 
-  rec.onstart = () => {
-    isRecording = true;
-    btnMic.classList.add("recording");
-    voiceStatusBar.style.display = "flex";
-    voiceStatusText.innerText = "🔴 Говорите задачу... (микрофон включен)";
-  };
+      activeRecognition.onstart = () => {
+        isRecording = true;
+        btnMic.classList.add("recording");
+        voiceStatusBar.style.display = "flex";
+        voiceStatusText.innerText = "🔴 Говорите задачу... (микрофон активен)";
+      };
 
-  rec.onresult = (event) => {
-    let interim = "";
-    let final = "";
-    for (let i = 0; i < event.results.length; ++i) {
-      if (event.results[i].isFinal) {
-        final += event.results[i][0].transcript + " ";
-      } else {
-        interim += event.results[i][0].transcript;
-      }
+      activeRecognition.onresult = (event) => {
+        let interim = "";
+        let final = "";
+        for (let i = 0; i < event.results.length; ++i) {
+          if (event.results[i].isFinal) {
+            final += event.results[i][0].transcript + " ";
+          } else {
+            interim += event.results[i][0].transcript;
+          }
+        }
+        const current = (final + interim).trim();
+        if (current) {
+          taskInput.value = current;
+          taskInput.style.height = "auto";
+          taskInput.style.height = (taskInput.scrollHeight) + "px";
+          voiceStatusText.innerText = "🎙 " + current;
+        }
+      };
+
+      activeRecognition.onerror = (e) => {
+        console.warn("SpeechRecognition error:", e.error);
+        if (e.error === "not-allowed" || e.error === "service-not-allowed") {
+          isRecording = false;
+          btnMic.classList.remove("recording");
+          voiceStatusBar.style.display = "none";
+          alert("Доступ к микрофону заблокирован в настройках браузера. Разрешите микрофон для этого сайта.");
+        } else if (e.error === "no-speech") {
+          // ignore silence
+        } else {
+          stopListening();
+          startMediaRecorderFallback();
+        }
+      };
+
+      activeRecognition.onend = () => {
+        isRecording = false;
+        btnMic.classList.remove("recording");
+        voiceStatusBar.style.display = "none";
+        if (taskInput.value.trim()) {
+          taskInput.focus();
+        }
+      };
+
+      // Direct synchronous start inside the user click!
+      activeRecognition.start();
+      return;
+    } catch (err) {
+      console.warn("SpeechRecognition start exception, using fallback:", err);
     }
-    const current = (final + interim).trim();
-    if (current) {
-      taskInput.value = current;
-      taskInput.style.height = "auto";
-      taskInput.style.height = (taskInput.scrollHeight) + "px";
-      voiceStatusText.innerText = "🎙 " + current;
-    }
-  };
+  }
 
-  rec.onerror = (e) => {
-    console.warn("Speech recognition error:", e.error);
-    isRecording = false;
-    btnMic.classList.remove("recording");
-    voiceStatusBar.style.display = "none";
-    if (e.error === "not-allowed" || e.error === "service-not-allowed") {
-      alert("Доступ к микрофону заблокирован. Разрешите доступ к микрофону в настройках браузера.");
-    } else if (e.error === "network") {
-      startMediaRecorderFallback();
-    }
-  };
-
-  rec.onend = () => {
-    isRecording = false;
-    btnMic.classList.remove("recording");
-    voiceStatusBar.style.display = "none";
-    if (taskInput.value.trim()) {
-      taskInput.focus();
-    }
-  };
-
-  return rec;
+  startMediaRecorderFallback();
 }
 
-recognition = setupSpeechRecognition();
+function stopListening() {
+  isRecording = false;
+  btnMic.classList.remove("recording");
+  voiceStatusBar.style.display = "none";
+
+  if (activeRecognition) {
+    try { activeRecognition.stop(); } catch(e) {}
+    activeRecognition = null;
+  }
+
+  if (mediaRecorder && mediaRecorder.state !== "inactive") {
+    stopMediaRecorderFallback();
+  }
+}
 
 async function startMediaRecorderFallback() {
   audioChunks = [];
@@ -468,7 +493,7 @@ async function startMediaRecorderFallback() {
     voiceStatusBar.style.display = "flex";
     voiceStatusText.innerText = "🔴 Запись аудио... Говорите";
   } catch (err) {
-    alert("Не удалось включить микрофон: разрешите доступ к микрофону в настройках браузера.");
+    alert("Не удалось включить микрофон: разрешите доступ к микрофону в браузере.");
     btnMic.classList.remove("recording");
     voiceStatusBar.style.display = "none";
   }
@@ -513,32 +538,13 @@ async function stopMediaRecorderFallback() {
 
 btnMic.addEventListener("click", (e) => {
   e.preventDefault();
-
-  if (recognition) {
-    if (isRecording) {
-      try { recognition.stop(); } catch(err) {}
-    } else {
-      try {
-        // Direct, synchronous start inside click handler!
-        recognition.start();
-      } catch (err) {
-        console.warn("SpeechRecognition start error:", err);
-        try {
-          recognition.stop();
-          setTimeout(() => recognition.start(), 150);
-        } catch(e2) {
-          startMediaRecorderFallback();
-        }
-      }
-    }
+  if (isRecording) {
+    stopListening();
   } else {
-    if (isRecording) {
-      stopMediaRecorderFallback();
-    } else {
-      startMediaRecorderFallback();
-    }
+    startListening();
   }
 });
+
 
 // 7. Files Drawer & Modals Handlers
 btnToggleFiles.addEventListener("click", () => {
