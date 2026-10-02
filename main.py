@@ -159,11 +159,29 @@ Respond in JSON format:
 }}
 Return ONLY valid JSON.
 """
-            resp = client.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=prompt
-            )
-            raw = resp.text.strip()
+            # Call Gemini with gemini-flash-latest
+            raw = None
+            try:
+                from google import genai
+                client = genai.Client(api_key=api_key)
+                resp = client.models.generate_content(
+                    model="gemini-flash-latest",
+                    contents=prompt
+                )
+                raw = resp.text.strip()
+            except Exception as sdk_err:
+                logger.warning(f"SDK generation failed ({sdk_err}), falling back to direct REST API...")
+                import httpx
+                rest_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key={api_key}"
+                rest_payload = {
+                    "contents": [{"parts": [{"text": prompt}]}]
+                }
+                with httpx.Client(timeout=60.0) as http_client:
+                    r = http_client.post(rest_url, json=rest_payload)
+                    r.raise_for_status()
+                    res_json = r.json()
+                    raw = res_json["candidates"][0]["content"]["parts"][0]["text"].strip()
+
             if raw.startswith("```json"):
                 raw = raw[7:]
             if raw.endswith("```"):
