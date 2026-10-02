@@ -1,0 +1,26 @@
+﻿services:
+  - type: web
+    name: agent-master-backend
+    env: docker
+    plan: free
+    region: frankfurt
+    dockerContext: .
+    dockerfilePath: Dockerfile
+    healthCheckPath: /ping
+    envVars:
+      - key: PORT
+        value: 10000
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
+      - key: GEMINI_API_KEYS
+        sync: false
+      - key: R2_ACCOUNT_ID
+        sync: false
+      - key: R2_ACCESS_KEY_ID
+        sync: false
+      - key: R2_SECRET_ACCESS_KEY
+        sync: false
+      - key: R2_BUCKET_NAME
+        sync: false

@@ -1,0 +1,258 @@
+﻿:root {
+  --bg-color: #000000;
+  --card-bg: rgba(28, 28, 30, 0.75);
+  --card-border: rgba(255, 255, 255, 0.12);
+  --text-primary: #ffffff;
+  --text-secondary: #8e8e93;
+  --apple-blue: #0a84ff;
+  --apple-green: #30d158;
+  --apple-orange: #ff9f0a;
+  --apple-purple: #bf5af2;
+  --glass-blur: blur(24px);
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  -webkit-tap-highlight-color: transparent;
+  font-family: -apple-system, BlinkMacSystemFont, SF Pro Display, SF Pro Text, Helvetica Neue, sans-serif;
+}
+
+body {
+  background-color: var(--bg-color);
+  color: var(--text-primary);
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Apple Glass Header */
+.header-glass {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  background: var(--card-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border-bottom: 1px solid var(--card-border);
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.apple-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--card-border);
+  border-radius: 9999px;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.apple-pill:active {
+  transform: scale(0.96);
+  background: rgba(255, 255, 255, 0.15);
+}
+
+/* Chat Container */
+.chat-container {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  scroll-behavior: smooth;
+}
+
+.message {
+  max-width: 85%;
+  padding: 14px 18px;
+  border-radius: 22px;
+  font-size: 15px;
+  line-height: 1.5;
+  animation: fadeIn 0.25s ease-out;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.message.user {
+  align-self: flex-end;
+  background: var(--apple-blue);
+  color: #ffffff;
+  border-bottom-right-radius: 6px;
+}
+
+.message.assistant {
+  align-self: flex-start;
+  background: var(--card-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--card-border);
+  border-bottom-left-radius: 6px;
+}
+
+/* Code block inside message */
+pre {
+  background: rgba(0, 0, 0, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 14px;
+  padding: 12px;
+  overflow-x: auto;
+  margin: 10px 0;
+  font-family: SF Mono, Menlo, Consolas, monospace;
+  font-size: 13px;
+}
+
+/* Bottom Bar / Input Area */
+.input-dock {
+  background: var(--card-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border-top: 1px solid var(--card-border);
+  padding: 12px 16px 24px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.input-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.input-field {
+  flex: 1;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--card-border);
+  border-radius: 24px;
+  padding: 12px 18px;
+  color: #fff;
+  font-size: 15px;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.input-field:focus {
+  border-color: var(--apple-blue);
+}
+
+.btn-circle {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.btn-circle:active {
+  transform: scale(0.92);
+}
+
+.btn-mic {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+.btn-mic.recording {
+  background: #ff3b30;
+  animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+  0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(255, 59, 48, 0.7); }
+  70% { transform: scale(1.06); box-shadow: 0 0 0 10px rgba(255, 59, 48, 0); }
+  100% { transform: scale(1); }
+}
+
+.btn-send {
+  background: var(--apple-blue);
+  color: #fff;
+}
+
+/* Audio Wave Visualizer */
+.waveform-container {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 28px;
+}
+
+.waveform-container.active {
+  display: flex;
+}
+
+.wave-bar {
+  width: 3px;
+  height: 8px;
+  background: #ff3b30;
+  border-radius: 3px;
+  animation: wave 1s ease-in-out infinite;
+}
+
+@keyframes wave {
+  0%, 100% { height: 6px; }
+  50% { height: 26px; }
+}
+
+/* Apple Bottom Sheet Modal */
+.modal-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(8px);
+  z-index: 100;
+  align-items: flex-end;
+  justify-content: center;
+}
+
+.modal-overlay.open {
+  display: flex;
+}
+
+.modal-sheet {
+  background: #1c1c1e;
+  border-top-left-radius: 28px;
+  border-top-right-radius: 28px;
+  width: 100%;
+  max-width: 520px;
+  max-height: 85vh;
+  padding: 16px 20px 32px 20px;
+  border-top: 1px solid var(--card-border);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes slideUp {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+
+.sheet-handle {
+  width: 36px;
+  height: 5px;
+  background: rgba(255, 255, 255, 0.3);
+  border-radius: 3px;
+  align-self: center;
+  margin-bottom: 4px;
+}

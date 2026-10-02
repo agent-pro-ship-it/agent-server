@@ -1,0 +1,138 @@
+﻿<!DOCTYPE html>
+<html lang=ru>
+<head>
+  <meta charset=UTF-8>
+  <meta name=viewport content=width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover>
+  <title>Apple AI Agent</title>
+  <link rel=manifest href=/manifest.json>
+  <link rel=stylesheet href=/style.css>
+  <meta name=apple-mobile-web-app-capable content=yes>
+  <meta name=apple-mobile-web-app-status-bar-style content=black-translucent>
+  <meta name=theme-color content=#000000>
+</head>
+<body>
+
+  <!-- Header -->
+  <header class=header-glass>
+    <div style=display: flex; align-items: center; gap: 8px;>
+      <span style=font-size: 18px; font-weight: 700; letter-spacing: -0.5px;>Agent</span>
+      <div id=statusDot style=width: 8px; height: 8px; border-radius: 50%; background: #30d158; title=Connected></div>
+    </div>
+
+    <div style=display: flex; align-items: center; gap: 8px;>
+      <button class=apple-pill id=btnAccountModal>
+        <span id=currentAccountLabel>Google 1</span>
+        <span style=font-size: 10px; opacity: 0.6;>▼</span>
+      </button>
+
+      <button class=apple-pill id=btnSkillsModal>
+        <span>⚡ Скиллы</span>
+      </button>
+
+      <button class=apple-pill id=btnStorageModal>
+        <span>☁️ Диск</span>
+      </button>
+
+      <button class=apple-pill id=btnSettingsModal>
+        <span>⚙️</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- Chat Feed -->
+  <main class=chat-container id=chatContainer>
+    <div class=message assistant>
+      Привет! Я ваш автономный AI-агент. Я подключен к вашей подписке с моделями Gemini 3.8, базе Supabase и облачному хранилищу. Готов к работе! Можете писать или нажать на микрофон для голосового диалога.
+    </div>
+  </main>
+
+  <!-- Voice Waveform Indicator -->
+  <div class=waveform-container id=waveform>
+    <div class=wave-bar style=animation-delay: 0.1s;></div>
+    <div class=wave-bar style=animation-delay: 0.2s;></div>
+    <div class=wave-bar style=animation-delay: 0.3s;></div>
+    <div class=wave-bar style=animation-delay: 0.4s;></div>
+    <div class=wave-bar style=animation-delay: 0.5s;></div>
+  </div>
+
+  <!-- Bottom Input Dock -->
+  <footer class=input-dock>
+    <div class=input-row>
+      <button class=btn-circle btn-mic id=btnMic title=Голосовой ввод>
+        <svg width=20 height=20 viewBox=0 0 24 24 fill=none stroke=currentColor stroke-width=2 stroke-linecap=round stroke-linejoin=round>
+          <path d=M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z></path>
+          <path d=M19 10v2a7 7 0 0 1-14 0v-2></path>
+          <line x1=12 y1=19 x2=12 y2=22></line>
+        </svg>
+      </button>
+
+      <input type=text class=input-field id=messageInput placeholder=Сообщение или задача... autocomplete=off>
+
+      <button class=btn-circle btn-send id=btnSend title=Отправить>
+        <svg width=18 height=18 viewBox=0 0 24 24 fill=none stroke=currentColor stroke-width=2.5 stroke-linecap=round stroke-linejoin=round>
+          <line x1=22 y1=2 x2=11 y2=13></line>
+          <polygon points=22 2 15 22 11 13 2 9 22 2></polygon>
+        </svg>
+      </button>
+    </div>
+  </footer>
+
+  <!-- Modal: Google Accounts -->
+  <div class=modal-overlay id=modalAccount>
+    <div class=modal-sheet>
+      <div class=sheet-handle></div>
+      <h3 style=font-size: 18px; font-weight: 600;>Управление Google Аккаунтами</h3>
+      <p style=font-size: 13px; color: var(--text-secondary);>
+        При исчерпании лимитов на активном аккаунте агент автоматически переключится на следующий. Вы также можете переключить вручную.
+      </p>
+
+      <div id=accountsList style=display: flex; flex-direction: column; gap: 8px;></div>
+
+      <hr style=border: none; border-top: 1px solid var(--card-border); margin: 6px 0;>
+      
+      <div style=display: flex; flex-direction: column; gap: 8px;>
+        <input type=text id=newAccountName class=input-field placeholder=Название (напр. Вторая почта)>
+        <input type=password id=newAccountKey class=input-field placeholder=API ключ (AIza...) или токен>
+        <button class=apple-pill id=btnAddAccount style=justify-content: center; background: var(--apple-blue); color: #fff; padding: 12px;>+ Добавить аккаунт в пул</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Skills & Plugins -->
+  <div class=modal-overlay id=modalSkills>
+    <div class=modal-sheet>
+      <div class=sheet-handle></div>
+      <h3 style=font-size: 18px; font-weight: 600;>Навыки и Плагины (Antigravity)</h3>
+      <p style=font-size: 13px; color: var(--text-secondary);>
+        Навыки передаются агенту в системный промпт перед каждой задачей.
+      </p>
+      <div id=skillsList style=display: flex; flex-direction: column; gap: 8px; max-height: 50vh; overflow-y: auto;></div>
+    </div>
+  </div>
+
+  <!-- Modal: Storage -->
+  <div class=modal-overlay id=modalStorage>
+    <div class=modal-sheet>
+      <div class=sheet-handle></div>
+      <h3 style=font-size: 18px; font-weight: 600;>Облачные Хранилища</h3>
+      <p style=font-size: 13px; color: var(--text-secondary);>
+        Файлы распределяются между Supabase Storage (1 ГБ) и Cloudflare R2 (10 ГБ).
+      </p>
+      <div id=storageFilesList style=display: flex; flex-direction: column; gap: 8px; max-height: 45vh; overflow-y: auto;></div>
+    </div>
+  </div>
+
+  <!-- Modal: Settings -->
+  <div class=modal-overlay id=modalSettings>
+    <div class=modal-sheet>
+      <div class=sheet-handle></div>
+      <h3 style=font-size: 18px; font-weight: 600;>Настройки Сервера</h3>
+      <p style=font-size: 13px; color: var(--text-secondary);>Адрес бэкенда на Render:</p>
+      <input type=text id=serverUrlInput class=input-field placeholder=https://ваш-сервер.onrender.com>
+      <button class=apple-pill id=btnSaveServerUrl style=justify-content: center; background: var(--apple-blue); color: #fff; padding: 12px;>Сохранить адрес</button>
+    </div>
+  </div>
+
+  <script src=/app.js></script>
+</body>
+</html>
