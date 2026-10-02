@@ -303,6 +303,72 @@ def antigravity_status():
     except Exception as e:
         return {"installed": False, "error": str(e)}
 
+active_auth_process = None
+
+@app.post("/api/antigravity/start-auth")
+def start_auth():
+    global active_auth_process
+    if active_auth_process and active_auth_process.poll() is None:
+        try:
+            active_auth_process.terminate()
+        except Exception:
+            pass
+
+    active_auth_process = subprocess.Popen(
+        ["agy", "-p", "auth_check"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1
+    )
+
+    auth_url = ""
+    import time
+    import re
+    start_time = time.time()
+    while time.time() - start_time < 15:
+        line = active_auth_process.stdout.readline()
+        if not line and active_auth_process.poll() is not None:
+            break
+        if "https://accounts.google.com/o/oauth2/auth" in line:
+            m = re.search(r'(https://accounts\.google\.com/o/oauth2/auth[^\s]+)', line)
+            if m:
+                auth_url = m.group(1).strip()
+                break
+
+    if auth_url:
+        return {"status": "waiting_for_code", "auth_url": auth_url}
+    return {"status": "error", "message": "Could not capture authentication URL"}
+
+class CodeSubmit(BaseModel):
+    code: str
+
+@app.post("/api/antigravity/submit-auth")
+def submit_auth(req: CodeSubmit):
+    global active_auth_process
+    if not active_auth_process or active_auth_process.poll() is not None:
+        return {"success": False, "error": "Сессия авторизации не найдена. Нажмите 'Войти через Google' заново."}
+
+    try:
+        active_auth_process.stdin.write(req.code.strip() + "\n")
+        active_auth_process.stdin.flush()
+        
+        import time
+        start_time = time.time()
+        output = ""
+        while time.time() - start_time < 15:
+            line = active_auth_process.stdout.readline()
+            if not line and active_auth_process.poll() is not None:
+                break
+            output += line
+            if "success" in line.lower() or "logged in" in line.lower() or "welcome" in line.lower() or "authenticated" in line.lower():
+                break
+
+        return {"success": True, "output": output}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
 @app.post("/api/antigravity/remote-control")
 def start_remote_control():
     """Starts Antigravity remote control daemon for official web dashboard access."""
