@@ -461,6 +461,59 @@ def api_get_env():
     all_keys = [k for k in os.environ.keys() if not k.startswith("_")]
     return {"configured_keys": sorted(all_keys), "safe_keys": safe_keys}
 
+
+@app.get("/api/git/diff")
+def api_get_git_diff():
+    """Returns detailed git diff for the Files Changed tab."""
+    try:
+        res = subprocess.run("git diff HEAD", shell=True, cwd=str(WORKSPACE_DIR), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=10)
+        raw_diff = res.stdout
+        
+        # Parse diff into files
+        files_diff = []
+        current_file = None
+        current_lines = []
+        
+        for line in raw_diff.splitlines():
+            if line.startswith("diff --git"):
+                if current_file:
+                    files_diff.append({"file": current_file, "diff": "\n".join(current_lines)})
+                parts = line.split(" ")
+                current_file = parts[-1].replace("b/", "") if len(parts) >= 4 else "unknown"
+                current_lines = [line]
+            else:
+                if current_file:
+                    current_lines.append(line)
+                    
+        if current_file and current_lines:
+            files_diff.append({"file": current_file, "diff": "\n".join(current_lines)})
+            
+        return {"has_changes": len(files_diff) > 0, "files": files_diff, "raw": raw_diff}
+    except Exception as e:
+        return {"has_changes": False, "files": [], "error": str(e)}
+
+@app.get("/api/artifacts")
+def api_get_artifacts():
+    """Returns list of markdown artifacts for the Artifacts tab."""
+    artifacts = []
+    # Check workspace for plans, walkthroughs, and markdown reports
+    for root, _, files in os.walk(str(WORKSPACE_DIR)):
+        for f in files:
+            if f.endswith(".md"):
+                fp = Path(root) / f
+                rel = fp.relative_to(WORKSPACE_DIR).as_posix()
+                try:
+                    text = fp.read_text(encoding="utf-8")
+                    artifacts.append({
+                        "name": f,
+                        "path": rel,
+                        "size": fp.stat().st_size,
+                        "preview": text[:200]
+                    })
+                except Exception:
+                    pass
+    return {"artifacts": artifacts}
+
 @app.post("/api/terminal")
 def execute_command(req: CommandRequest):
     """Executes bash commands directly on the server."""

@@ -149,6 +149,40 @@
 
         <!-- Floating Antigravity Input Box -->
         <div class="chat-input-wrapper">
+
+          <!-- Slash Commands Autocomplete Popup -->
+          <div class="slash-popup" id="slashPopup" style="display:none;">
+            <div class="slash-popup-header">Slash Commands (Google Antigravity)</div>
+            <div class="slash-item active" data-cmd="/goal">
+              <span class="slash-name">/goal</span>
+              <span class="slash-desc">Автономная задача до полного достижения цели</span>
+            </div>
+            <div class="slash-item" data-cmd="/schedule">
+              <span class="slash-name">/schedule</span>
+              <span class="slash-desc">Запуск по расписанию (cron) или таймер</span>
+            </div>
+            <div class="slash-item" data-cmd="/browser">
+              <span class="slash-name">/browser</span>
+              <span class="slash-desc">Управление веб-браузером и тестирование</span>
+            </div>
+            <div class="slash-item" data-cmd="/grill-me">
+              <span class="slash-name">/grill-me</span>
+              <span class="slash-desc">Интерактивное интервью по архитектуре проекта</span>
+            </div>
+            <div class="slash-item" data-cmd="/boost">
+              <span class="slash-name">/boost</span>
+              <span class="slash-desc">Глубокие рассуждения и строгая верификация</span>
+            </div>
+            <div class="slash-item" data-cmd="/learn">
+              <span class="slash-name">/learn</span>
+              <span class="slash-desc">Сохранить паттерны и правила для будущих задач</span>
+            </div>
+            <div class="slash-item" data-cmd="/teamwork-preview">
+              <span class="slash-name">/teamwork-preview</span>
+              <span class="slash-desc">Команда автономных субагентов для проекта</span>
+            </div>
+          </div>
+
           <div class="input-card">
             <!-- Quick Action Chips -->
             <div class="quick-chips-bar">
@@ -211,6 +245,71 @@
         </div>
 
       </main>
+
+      
+      <!-- Auxiliary Right Pane (Subagents, Artifacts, Files Changed, Terminal) -->
+      <aside class="auxiliary-pane" id="auxiliaryPane">
+        <div class="aux-header">
+          <div class="aux-tabs">
+            <button class="aux-tab-btn active" data-tab="subagents">Subagents</button>
+            <button class="aux-tab-btn" data-tab="artifacts">Artifacts</button>
+            <button class="aux-tab-btn" data-tab="files-changed">Files Changed</button>
+            <button class="aux-tab-btn" data-tab="terminal">Terminal</button>
+          </div>
+          <button class="aux-close-btn" id="btnCloseAuxPane" title="Закрыть панель">✕</button>
+        </div>
+
+        <div class="aux-body">
+          <!-- Tab 1: Subagents -->
+          <div class="aux-tab-content active" id="tabContentSubagents">
+            <div class="aux-section-title">Active Subagent Tree</div>
+            <div class="subagent-tree-list" id="subagentsTreeList">
+              <div class="subagent-card">
+                <div class="subagent-card-header">
+                  <span class="subagent-badge-parent">MAIN</span>
+                  <strong>Antigravity Orchestrator</strong>
+                  <span class="subagent-status-dot online"></span>
+                </div>
+                <div class="subagent-role">Role: Lead Architect & Autonomous Executor</div>
+                <div class="subagent-model">Model: Gemini 3.8 Flash (High)</div>
+              </div>
+              <div class="subagent-card child">
+                <div class="subagent-card-header">
+                  <span class="subagent-badge-child">SUB</span>
+                  <strong>Code Researcher</strong>
+                  <span class="subagent-status-dot idle"></span>
+                </div>
+                <div class="subagent-role">Role: Codebase Exploration & Search</div>
+                <div class="subagent-model">Workspace: inherit</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Tab 2: Artifacts -->
+          <div class="aux-tab-content" id="tabContentArtifacts">
+            <div class="aux-section-title">Project Artifacts & Plans</div>
+            <div class="artifacts-list" id="artifactsListContainer">
+              <p style="color:var(--text-muted); font-size:13px; padding:10px;">Загрузка артефактов...</p>
+            </div>
+          </div>
+
+          <!-- Tab 3: Files Changed / Diff -->
+          <div class="aux-tab-content" id="tabContentFilesChanged">
+            <div class="aux-section-title">
+              <span>Working Tree Diff</span>
+              <button class="btn-action-outline" id="btnRefreshDiff" style="padding:2px 8px; font-size:11px;">Обновить</button>
+            </div>
+            <div class="diff-viewer-container" id="diffViewerContainer">
+              <p style="color:var(--text-muted); font-size:13px; padding:10px;">Нет несохраненных изменений (Clean working directory).</p>
+            </div>
+          </div>
+
+          <!-- Tab 4: Embedded Terminal -->
+          <div class="aux-tab-content" id="tabContentTerminal" style="padding:0; height:100%;">
+            <iframe src="https://agent-master-server.onrender.com/terminal/" class="aux-terminal-frame" id="auxTerminalFrame"></iframe>
+          </div>
+        </div>
+      </aside>
 
       <!-- Slide-over Files Drawer -->
       <div class="files-drawer" id="filesDrawer">

@@ -661,6 +661,11 @@ function formatMarkdown(text) {
   html = html.replace(/^# (.*$)/gim, '<h1>$1</h1>');
   html = html.replace(/\*\*(.*?)\*\*/gim, '<strong>$1</strong>');
   html = html.replace(/\*(.*?)\*/gim, '<em>$1</em>');
+  // GitHub alerts
+  html = html.replace(/^> \[!NOTE\]\s*(.+)$/gm, '<div class="antigravity-alert"><strong>Note:</strong> $1</div>');
+  html = html.replace(/^> \[!IMPORTANT\]\s*(.+)$/gm, '<div class="antigravity-alert important"><strong>Important:</strong> $1</div>');
+  html = html.replace(/^> \[!WARNING\]\s*(.+)$/gm, '<div class="antigravity-alert warning"><strong>Warning:</strong> $1</div>');
+  html = html.replace(/^> \[!TIP\]\s*(.+)$/gm, '<div class="antigravity-alert tip"><strong>Tip:</strong> $1</div>');
   html = html.replace(/`([^`]+)`/gim, '<code>$1</code>');
   html = html.replace(/\[([^\]]+)\]\(([^\)]+)\)/gim, '<a href="$2" target="_blank">$1</a>');
   html = html.replace(/^\s*\* (.*$)/gim, '<ul><li>$1</li></ul>');
@@ -1071,3 +1076,195 @@ window.openProjectFile = function(filePath) {
 fetchAccounts();
 fetchGitStatus();
 setInterval(fetchGitStatus, 15000);
+
+
+// ========================================================
+// AUXILIARY PANE, SLASH COMMANDS & THINKING PARITY LOGIC
+// ========================================================
+
+const auxiliaryPane = document.getElementById("auxiliaryPane");
+const btnToggleLayout = document.getElementById("btnToggleLayout");
+const btnCloseAuxPane = document.getElementById("btnCloseAuxPane");
+const artifactsListContainer = document.getElementById("artifactsListContainer");
+const diffViewerContainer = document.getElementById("diffViewerContainer");
+const btnRefreshDiff = document.getElementById("btnRefreshDiff");
+const slashPopup = document.getElementById("slashPopup");
+
+// 1. Auxiliary Pane Toggle & Tabs
+if (btnToggleLayout) {
+  btnToggleLayout.addEventListener("click", () => {
+    auxiliaryPane.classList.toggle("open");
+    if (auxiliaryPane.classList.contains("open")) {
+      const activeTab = document.querySelector(".aux-tab-btn.active");
+      const tabName = activeTab ? activeTab.getAttribute("data-tab") : "subagents";
+      switchAuxTab(tabName);
+    }
+  });
+}
+
+if (btnCloseAuxPane) {
+  btnCloseAuxPane.addEventListener("click", () => auxiliaryPane.classList.remove("open"));
+}
+
+document.querySelectorAll(".aux-tab-btn").forEach(btn => {
+  btn.addEventListener("click", () => {
+    const tabName = btn.getAttribute("data-tab");
+    switchAuxTab(tabName);
+  });
+});
+
+function switchAuxTab(tabName) {
+  document.querySelectorAll(".aux-tab-btn").forEach(b => b.classList.remove("active"));
+  document.querySelectorAll(".aux-tab-content").forEach(c => c.classList.remove("active"));
+
+  const targetBtn = document.querySelector(`.aux-tab-btn[data-tab="${tabName}"]`);
+  if (targetBtn) targetBtn.classList.add("active");
+
+  if (tabName === "subagents") {
+    const el = document.getElementById("tabContentSubagents");
+    if (el) el.classList.add("active");
+  } else if (tabName === "artifacts") {
+    const el = document.getElementById("tabContentArtifacts");
+    if (el) el.classList.add("active");
+    fetchArtifacts();
+  } else if (tabName === "files-changed") {
+    const el = document.getElementById("tabContentFilesChanged");
+    if (el) el.classList.add("active");
+    fetchGitDiff();
+  } else if (tabName === "terminal") {
+    const el = document.getElementById("tabContentTerminal");
+    if (el) el.classList.add("active");
+  }
+}
+
+// 2. Fetch Artifacts
+async function fetchArtifacts() {
+  if (!artifactsListContainer) return;
+  artifactsListContainer.innerHTML = '<div style="color:var(--text-muted); font-size:12px; padding:8px;">Загрузка артефактов...</div>';
+  try {
+    const res = await fetch(`${SERVER_URL}/api/artifacts`);
+    if (res.ok) {
+      const data = await res.json();
+      const list = data.artifacts || [];
+      if (list.length === 0) {
+        artifactsListContainer.innerHTML = '<div style="color:var(--text-muted); font-size:12px; padding:8px;">Нет артефактов в проекте.</div>';
+        return;
+      }
+      artifactsListContainer.innerHTML = list.map(art => `
+        <div class="artifact-card" onclick="openProjectFile('${escapeHtml(art.path)}')">
+          <div class="artifact-title">📄 ${escapeHtml(art.name)}</div>
+          <div class="artifact-preview">${escapeHtml(art.preview || '')}</div>
+        </div>
+      `).join('');
+    }
+  } catch (e) {
+    artifactsListContainer.innerHTML = '<div style="color:var(--text-muted); font-size:12px; padding:8px;">Не удалось загрузить артефакты.</div>';
+  }
+}
+
+// 3. Fetch Git Diff
+async function fetchGitDiff() {
+  if (!diffViewerContainer) return;
+  diffViewerContainer.innerHTML = '<div style="color:var(--text-muted); font-size:12px; padding:8px;">Загрузка diff...</div>';
+  try {
+    const res = await fetch(`${SERVER_URL}/api/git/diff`);
+    if (res.ok) {
+      const data = await res.json();
+      if (!data.has_changes || !data.files || data.files.length === 0) {
+        diffViewerContainer.innerHTML = '<div style="color:var(--text-muted); font-size:12px; padding:8px;">✔ Рабочая директория чиста. Нет несохраненных изменений.</div>';
+        return;
+      }
+      diffViewerContainer.innerHTML = data.files.map(f => {
+        const linesHtml = f.diff.split('\n').map(l => {
+          let cls = 'diff-line';
+          if (l.startsWith('+') && !l.startsWith('+++')) cls += ' added';
+          else if (l.startsWith('-') && !l.startsWith('---')) cls += ' removed';
+          else if (l.startsWith('@@')) cls += ' info';
+          return `<div class="${cls}">${escapeHtml(l)}</div>`;
+        }).join('');
+        return `
+          <div class="diff-file-block">
+            <div class="diff-file-header">📄 ${escapeHtml(f.file)}</div>
+            <pre class="diff-code-body">${linesHtml}</pre>
+          </div>
+        `;
+      }).join('');
+    }
+  } catch (e) {
+    diffViewerContainer.innerHTML = '<div style="color:var(--text-muted); font-size:12px; padding:8px;">Ошибка получения diff.</div>';
+  }
+}
+
+if (btnRefreshDiff) {
+  btnRefreshDiff.addEventListener("click", () => fetchGitDiff());
+}
+
+// 4. Slash Commands Autocomplete
+if (taskInput && slashPopup) {
+  taskInput.addEventListener("input", () => {
+    const val = taskInput.value;
+    if (val.startsWith("/") && val.length < 15 && !val.includes(" ")) {
+      slashPopup.style.display = "block";
+      const filter = val.toLowerCase();
+      document.querySelectorAll(".slash-item").forEach(item => {
+        const cmd = item.getAttribute("data-cmd").toLowerCase();
+        item.style.display = cmd.includes(filter) ? "flex" : "none";
+      });
+    } else {
+      slashPopup.style.display = "none";
+    }
+  });
+
+  taskInput.addEventListener("keydown", (e) => {
+    if (slashPopup.style.display === "block") {
+      const visibleItems = Array.from(document.querySelectorAll(".slash-item")).filter(i => i.style.display !== "none");
+      if (visibleItems.length === 0) return;
+
+      let currentIndex = visibleItems.findIndex(i => i.classList.contains("active"));
+
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        visibleItems.forEach(i => i.classList.remove("active"));
+        const nextIndex = (currentIndex + 1) % visibleItems.length;
+        visibleItems[nextIndex].classList.add("active");
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        visibleItems.forEach(i => i.classList.remove("active"));
+        const prevIndex = (currentIndex - 1 + visibleItems.length) % visibleItems.length;
+        visibleItems[prevIndex].classList.add("active");
+      } else if (e.key === "Enter" || e.key === "Tab") {
+        e.preventDefault();
+        const activeItem = visibleItems[currentIndex] || visibleItems[0];
+        if (activeItem) {
+          selectSlashCommand(activeItem.getAttribute("data-cmd"));
+        }
+      } else if (e.key === "Escape") {
+        slashPopup.style.display = "none";
+      }
+    }
+  });
+
+  document.querySelectorAll(".slash-item").forEach(item => {
+    item.addEventListener("click", () => {
+      selectSlashCommand(item.getAttribute("data-cmd"));
+    });
+  });
+}
+
+function selectSlashCommand(cmd) {
+  if (!taskInput || !cmd) return;
+  taskInput.value = cmd + " ";
+  slashPopup.style.display = "none";
+  taskInput.focus();
+}
+
+// 5. Rich Markdown Enhancements (Alerts, Code Copy)
+window.copyCodeSnippet = function(btn) {
+  const pre = btn.closest(".code-wrapper").querySelector("pre code");
+  if (pre) {
+    navigator.clipboard.writeText(pre.innerText).then(() => {
+      btn.innerText = "Copied!";
+      setTimeout(() => { btn.innerText = "Copy"; }, 1500);
+    });
+  }
+};
