@@ -1712,8 +1712,25 @@ async function handleUserLiveUtterance(userText) {
       appendLiveBubble("assistant", reply);
       liveHistory.push({ role: "model", text: reply });
 
+      let audioB64 = data.audio_base64;
+      if (!audioB64) {
+        try {
+          const ttsRes = await fetch(`${SERVER_URL}/api/edge-tts`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text: reply, voice: "ru-RU-DmitryNeural" })
+          });
+          if (ttsRes.ok) {
+            const ttsData = await ttsRes.json();
+            audioB64 = ttsData.audio_base64;
+          }
+        } catch (e) {
+          console.warn("Direct Edge TTS fetch fallback error:", e);
+        }
+      }
+
       // Speak reply with TRUE studio quality Microsoft Edge Neural Voice
-      speakNaturalReply(reply, data.audio_base64, () => {
+      speakNaturalReply(reply, audioB64, () => {
         liveIsThinking = false;
         const modal = document.getElementById("modalGeminiLive");
         if (modal && modal.classList.contains("active") && liveIsListening) {
@@ -1753,7 +1770,7 @@ function appendLiveBubble(role, text) {
 let liveAudioPlayer = null;
 
 // 7. Speech Synthesis with TRUE Microsoft Edge Studio Neural Voice (Audio Element)
-function speakNaturalReply(text, audioBase64, onComplete) {
+async function speakNaturalReply(text, audioBase64, onComplete) {
   // Stop any previous speech / audio
   if (liveAudioPlayer) {
     try {
@@ -1770,6 +1787,23 @@ function speakNaturalReply(text, audioBase64, onComplete) {
   if (orb) orb.className = "live-orb speaking";
   const status = document.getElementById("liveStatusText");
   if (status) status.innerText = "🔊 Gemini говорит (Edge Studio Voice)...";
+
+  // If audioBase64 was not provided, fetch from backend /api/edge-tts
+  if (!audioBase64) {
+    try {
+      const resp = await fetch(`${SERVER_URL}/api/edge-tts`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: text, voice: "ru-RU-DmitryNeural" })
+      });
+      if (resp.ok) {
+        const d = await resp.json();
+        audioBase64 = d.audio_base64;
+      }
+    } catch (e) {
+      console.warn("Direct Edge TTS fetch failed:", e);
+    }
+  }
 
   // Priority 1: True Microsoft Edge Studio Neural MP3 Audio from Backend
   if (audioBase64) {
