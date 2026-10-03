@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM mcr.microsoft.com/playwright/python:v1.45.0-noble
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -6,27 +6,27 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-# Install system dependencies (git, curl, tar, ca-certificates, chromium browser, fonts)
+# Install system utilities
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     curl \
     tar \
     ca-certificates \
-    chromium \
-    fonts-liberation \
     procps \
     && rm -rf /var/lib/apt/lists/*
 
-# Install official Google Antigravity CLI (agy)
-RUN curl -fsSL https://antigravity.google/cli/install.sh | bash -s -- --dir /usr/local/bin && \
-    chmod +x /usr/local/bin/agy
-
-# Install ttyd web terminal for remote Antigravity access
+# Install ttyd web terminal for remote shell access
 RUN curl -fsSL https://github.com/tsl0922/ttyd/releases/download/1.7.7/ttyd.x86_64 -o /usr/local/bin/ttyd && \
     chmod +x /usr/local/bin/ttyd
 
+# Optional Antigravity CLI installation
+RUN (curl -fsSL https://antigravity.google/cli/install.sh | bash -s -- --dir /usr/local/bin) || true
+
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+
+# Ensure Chromium headless shell is ready
+RUN playwright install chromium
 
 COPY . .
 
