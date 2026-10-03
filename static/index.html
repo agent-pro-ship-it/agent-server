@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>Google Antigravity Cloud</title>
   <link rel="manifest" href="manifest.json">
-  <link rel="stylesheet" href="style.css?v=2.6">
+  <link rel="stylesheet" href="style.css?v=2.7">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -558,6 +558,11 @@
           </div>
         </div>
 
+        <!-- Real-time Hardware Microphone Volume VU Meter -->
+        <div class="live-volume-meter" title="Индикатор громкости вашего микрофона">
+          <div class="live-volume-bar" id="liveVolumeBar"></div>
+        </div>
+
         <div class="live-status-text" id="liveStatusText">Нажмите «Начать диалог» для живого обсуждения идеи</div>
 
         <!-- Live Subtitles & Dialogue History -->
@@ -565,6 +570,12 @@
           <div class="live-msg-bubble assistant">
             👋 Привет! Я готов обсудить любые идеи для проекта. Говорите голосом — я отвечу кратко и по делу!
           </div>
+        </div>
+
+        <!-- Quick Text Input Backup -->
+        <div class="live-input-row">
+          <input type="text" id="liveTextInput" class="live-text-input" placeholder="Или напишите мысль текстом и нажмите Enter...">
+          <button id="btnLiveSendText" class="btn-live-send" title="Отправить текст">➤</button>
         </div>
       </div>
 
@@ -589,6 +600,6 @@
 
   <input type="file" id="filePicker" style="display:none;">
 
-  <script src="app.js?v=2.6"></script>
+  <script src="app.js?v=2.7"></script>
 </body>
 </html>
