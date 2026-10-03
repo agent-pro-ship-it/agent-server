@@ -549,14 +549,63 @@ class LiveChatRequest(BaseModel):
     message: str
     history: Optional[List[Dict[str, str]]] = []
     gemini_key: Optional[str] = None
+    voice: Optional[str] = "ru-RU-DmitryNeural"
 
 class SummarizeTaskRequest(BaseModel):
     history: List[Dict[str, str]]
     gemini_key: Optional[str] = None
 
+class EdgeTTSRequest(BaseModel):
+    text: str
+    voice: Optional[str] = "ru-RU-DmitryNeural"
+
+async def synthesize_edge_studio_voice(text: str, voice: str = "ru-RU-DmitryNeural") -> Optional[str]:
+    """Synthesizes crystal-clear Microsoft Edge studio voice and returns base64 MP3."""
+    import ssl
+    import base64
+    import re
+    import edge_tts
+    import edge_tts.communicate
+
+    try:
+        edge_tts.communicate._SSL_CTX = ssl._create_unverified_context()
+    except Exception:
+        pass
+
+    clean = re.sub(r'[*#_`~>\[\]\(\)]', '', text)
+    clean = clean.replace('—', '-').replace('–', '-').strip()
+    if not clean:
+        return None
+
+    try:
+        c = edge_tts.Communicate(clean, voice)
+        chunks = []
+        async for chunk in c.stream():
+            if chunk.get("type") == "audio":
+                chunks.append(chunk["data"])
+        if not chunks:
+            return None
+        raw = b"".join(chunks)
+        return base64.b64encode(raw).decode("utf-8")
+    except Exception as err:
+        logger.warning(f"synthesize_edge_studio_voice error: {err}")
+        return None
+
+@app.post("/api/edge-tts")
+async def api_edge_tts(req: EdgeTTSRequest):
+    """Generates crystal-clear Microsoft Edge studio voice audio."""
+    try:
+        audio_b64 = await synthesize_edge_studio_voice(req.text, voice=req.voice or "ru-RU-DmitryNeural")
+        if not audio_b64:
+            raise HTTPException(status_code=500, detail="Failed to synthesize audio")
+        return {"success": True, "audio_base64": audio_b64, "voice": req.voice or "ru-RU-DmitryNeural"}
+    except Exception as e:
+        logger.error(f"Edge TTS endpoint exception: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/api/gemini/cascade-chat")
-def api_gemini_cascade_chat(req: LiveChatRequest):
-    """Ultra-fast brainstorming chat with automatic 24h model cascade failover."""
+async def api_gemini_cascade_chat(req: LiveChatRequest):
+    """Ultra-fast brainstorming chat with automatic 24h model cascade failover and Edge Studio TTS."""
     import httpx
     api_key = req.gemini_key or os.getenv("GEMINI_API_KEY", "")
     if not api_key:
@@ -577,7 +626,7 @@ def api_gemini_cascade_chat(req: LiveChatRequest):
     now = time.time()
     last_error = None
 
-    with httpx.Client(timeout=15.0, verify=False) as client:
+    async with httpx.AsyncClient(timeout=15.0, verify=False) as client:
         for model_name in CASCADE_MODELS:
             blocked_until = model_quota_status.get(model_name, 0)
             if now < blocked_until:
@@ -593,13 +642,20 @@ def api_gemini_cascade_chat(req: LiveChatRequest):
                 }
             }
             try:
-                r = client.post(url, json=payload)
+                r = await client.post(url, json=payload)
                 if r.status_code == 200:
                     data = r.json()
                     candidates = data.get("candidates", [])
                     if candidates and "content" in candidates[0]:
                         reply = candidates[0]["content"]["parts"][0]["text"].strip()
-                        return {"success": True, "reply": reply, "model_used": model_name}
+                        audio_b64 = await synthesize_edge_studio_voice(reply, voice=req.voice or "ru-RU-DmitryNeural")
+                        return {
+                            "success": True,
+                            "reply": reply,
+                            "model_used": model_name,
+                            "audio_base64": audio_b64,
+                            "voice": req.voice or "ru-RU-DmitryNeural"
+                        }
                 elif r.status_code == 429:
                     logger.warning(f"Model {model_name} quota 429 hit. Blocking for 6 hours in cascade.")
                     model_quota_status[model_name] = now + 21600  # 6h block
@@ -612,10 +668,14 @@ def api_gemini_cascade_chat(req: LiveChatRequest):
                 last_error = str(e)
 
     # Fallback to direct simple reply
+    fallback_reply = "Отличная идея! Можем сразу приступать к её реализации или уточнить детали."
+    fallback_audio = await synthesize_edge_studio_voice(fallback_reply, voice=req.voice or "ru-RU-DmitryNeural")
     return {
         "success": False,
-        "reply": "Отличная идея! Можем сразу приступать к её реализации или уточнить детали.",
+        "reply": fallback_reply,
         "model_used": "offline_fallback",
+        "audio_base64": fallback_audio,
+        "voice": req.voice or "ru-RU-DmitryNeural",
         "error": last_error
     }
 

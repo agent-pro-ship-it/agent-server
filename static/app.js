@@ -1638,6 +1638,13 @@ function stopLiveSession() {
   liveIsThinking = false;
   liveUserSpokeSound = false;
 
+  if (liveAudioPlayer) {
+    try {
+      liveAudioPlayer.pause();
+      liveAudioPlayer.currentTime = 0;
+    } catch(e) {}
+    liveAudioPlayer = null;
+  }
   if ("speechSynthesis" in window) {
     window.speechSynthesis.cancel();
   }
@@ -1698,14 +1705,15 @@ async function handleUserLiveUtterance(userText) {
       const data = await res.json();
       const reply = data.reply || "Понял вас! Развиваем эту мысль дальше.";
       const badge = document.getElementById("liveActiveModelBadge");
-      if (data.model_used && badge) {
-        badge.innerText = `Каскад: ${data.model_used} • Studio Voice`;
+      if (badge) {
+        const modelStr = data.model_used || "Gemini 3.1 Flash";
+        badge.innerText = `Каскад: ${modelStr} • Edge Dmitry Studio`;
       }
       appendLiveBubble("assistant", reply);
       liveHistory.push({ role: "model", text: reply });
 
-      // Speak reply with studio quality voice
-      speakNaturalReply(reply, () => {
+      // Speak reply with TRUE studio quality Microsoft Edge Neural Voice
+      speakNaturalReply(reply, data.audio_base64, () => {
         liveIsThinking = false;
         const modal = document.getElementById("modalGeminiLive");
         if (modal && modal.classList.contains("active") && liveIsListening) {
@@ -1742,15 +1750,64 @@ function appendLiveBubble(role, text) {
   dialog.scrollTop = dialog.scrollHeight;
 }
 
-// 7. Speech Synthesis with Microsoft Natural Voice
-function speakNaturalReply(text, onComplete) {
+let liveAudioPlayer = null;
+
+// 7. Speech Synthesis with TRUE Microsoft Edge Studio Neural Voice (Audio Element)
+function speakNaturalReply(text, audioBase64, onComplete) {
+  // Stop any previous speech / audio
+  if (liveAudioPlayer) {
+    try {
+      liveAudioPlayer.pause();
+      liveAudioPlayer.currentTime = 0;
+    } catch(e) {}
+    liveAudioPlayer = null;
+  }
+  if (typeof window !== "undefined" && "speechSynthesis" in window) {
+    window.speechSynthesis.cancel();
+  }
+
+  const orb = document.getElementById("liveOrb");
+  if (orb) orb.className = "live-orb speaking";
+  const status = document.getElementById("liveStatusText");
+  if (status) status.innerText = "🔊 Gemini говорит (Edge Studio Voice)...";
+
+  // Priority 1: True Microsoft Edge Studio Neural MP3 Audio from Backend
+  if (audioBase64) {
+    try {
+      const audioUrl = "data:audio/mp3;base64," + audioBase64;
+      liveAudioPlayer = new Audio(audioUrl);
+
+      liveAudioPlayer.onended = () => {
+        liveAudioPlayer = null;
+        if (onComplete) onComplete();
+      };
+
+      liveAudioPlayer.onerror = (e) => {
+        console.warn("Studio audio playback error, falling back to WebSpeech:", e);
+        fallbackSpeechSynthesis(text, onComplete);
+      };
+
+      liveAudioPlayer.play().catch(err => {
+        console.warn("Studio audio play() blocked or failed:", err);
+        fallbackSpeechSynthesis(text, onComplete);
+      });
+      return;
+    } catch (e) {
+      console.warn("Audio element exception:", e);
+    }
+  }
+
+  // Priority 2: Fallback to browser speechSynthesis
+  fallbackSpeechSynthesis(text, onComplete);
+}
+
+function fallbackSpeechSynthesis(text, onComplete) {
   if (typeof window === "undefined" || !("speechSynthesis" in window)) {
     if (onComplete) onComplete();
     return;
   }
 
   window.speechSynthesis.cancel();
-
   const cleanText = text.replace(/[*#`_]/g, "").trim();
   const utter = new SpeechSynthesisUtterance(cleanText);
   utter.rate = 1.05;
@@ -1759,11 +1816,6 @@ function speakNaturalReply(text, onComplete) {
   if (liveBestVoice) {
     utter.voice = liveBestVoice;
   }
-
-  const orb = document.getElementById("liveOrb");
-  if (orb) orb.className = "live-orb speaking";
-  const status = document.getElementById("liveStatusText");
-  if (status) status.innerText = "🔊 Gemini говорит...";
 
   utter.onend = () => {
     if (onComplete) onComplete();
@@ -1778,6 +1830,13 @@ function speakNaturalReply(text, onComplete) {
 // 8. Stop Speaking Button
 if (btnLiveStopAudio) {
   btnLiveStopAudio.addEventListener("click", () => {
+    if (liveAudioPlayer) {
+      try {
+        liveAudioPlayer.pause();
+        liveAudioPlayer.currentTime = 0;
+      } catch(e) {}
+      liveAudioPlayer = null;
+    }
     if ("speechSynthesis" in window) {
       window.speechSynthesis.cancel();
     }

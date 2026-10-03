@@ -9,3 +9,4 @@ httpx
 python-dotenv
 python-multipart
 psutil
+edge-tts
