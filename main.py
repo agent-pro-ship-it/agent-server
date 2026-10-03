@@ -584,24 +584,22 @@ async def synthesize_edge_studio_voice(text: str, voice: str = "ru-RU-DmitryNeur
             if chunk.get("type") == "audio":
                 chunks.append(chunk["data"])
         if not chunks:
-            return None
+            raise RuntimeError("No audio chunks received from Edge TTS")
         raw = b"".join(chunks)
         return base64.b64encode(raw).decode("utf-8")
     except Exception as err:
         logger.warning(f"synthesize_edge_studio_voice error: {err}")
-        return None
+        raise err
 
 @app.post("/api/edge-tts")
 async def api_edge_tts(req: EdgeTTSRequest):
     """Generates crystal-clear Microsoft Edge studio voice audio."""
     try:
         audio_b64 = await synthesize_edge_studio_voice(req.text, voice=req.voice or "ru-RU-DmitryNeural")
-        if not audio_b64:
-            raise HTTPException(status_code=500, detail="Failed to synthesize audio")
         return {"success": True, "audio_base64": audio_b64, "voice": req.voice or "ru-RU-DmitryNeural"}
     except Exception as e:
         logger.error(f"Edge TTS endpoint exception: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {str(e)}")
 
 @app.post("/api/gemini/cascade-chat")
 async def api_gemini_cascade_chat(req: LiveChatRequest):
