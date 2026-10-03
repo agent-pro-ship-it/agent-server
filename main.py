@@ -884,10 +884,11 @@ def run_autonomous_task(req: TaskRequest):
             res = subprocess.run(
                 ["agy", "--dangerously-skip-permissions", "-p", task],
                 cwd=str(target_dir),
+                stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
-                timeout=300
+                timeout=60
             )
             synced_to_cloud = []
             if s3_client:
