@@ -220,6 +220,32 @@ def api_create_project(req: ProjectCreateRequest):
         return {"success": True, "project": new_proj}
     return {"success": True, "project": existing}
 
+class ProjectUpdateRequest(BaseModel):
+    name: str
+    task: Optional[str] = None
+
+@app.patch("/api/projects/{project_id}")
+def api_update_project(project_id: str, req: ProjectUpdateRequest):
+    name = req.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Project name required")
+    projs = get_all_projects()
+    found = False
+    for p in projs:
+        if p.get("id") == project_id:
+            p["name"] = name
+            if req.task is not None:
+                p["task"] = req.task
+            found = True
+            break
+    if not found:
+        projs.append({"id": project_id, "name": name, "task": req.task or "", "time": "now", "active": True})
+    try:
+        PROJECTS_FILE.write_text(json.dumps(projs, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception as e:
+        logger.warning(f"Error saving PROJECTS_FILE: {e}")
+    return {"success": True, "project_id": project_id, "name": name}
+
 @app.get("/api/projects/{project_id}/files")
 def api_get_project_files(project_id: str):
     p_dir = WORKSPACE_DIR / project_id
@@ -881,10 +907,16 @@ def run_autonomous_task(req: TaskRequest):
                 "success": (res.returncode == 0),
                 "engine": "Google Antigravity CLI (Google Pro)",
                 "explanation": output_text.strip() if output_text else "Задача успешно выполнена агентом Antigravity.",
-                "stdout": res.stdout,
+                "stdout": "",
+                "terminal_log": (res.stdout or "") + ("\n" + res.stderr if res.stderr else ""),
                 "stderr": res.stderr,
                 "exit_code": res.returncode,
-                "cloud_synced_files": synced_to_cloud
+                "cloud_synced_files": synced_to_cloud,
+                "steps": [
+                    {"icon": "💭", "title": "Анализ задачи Antigravity", "status": "done"},
+                    {"icon": "⚡", "title": "Выполнение в рабочем пространстве", "status": "done"},
+                    {"icon": "☁️", "title": f"Синхронизация Storj S3 ({len(synced_to_cloud)} файлов)", "status": "done"} if synced_to_cloud else {"icon": "✓", "title": "Готово", "status": "done"}
+                ]
             }
         except Exception as agy_err:
             logger.warning(f"Antigravity CLI execution fallback: {agy_err}")
@@ -915,13 +947,7 @@ Return ONLY valid JSON.
 """
             # Call Gemini models with auto-failover
             raw = None
-            models_to_try = [
-                "gemini-3.8-flash",
-                "gemini-3.6-flash",
-                "gemini-3.5-flash",
-                "gemini-flash-latest",
-                "gemini-3.1-flash-lite"
-            ]
+            models_to_try = CASCADE_MODELS
             import httpx
             with httpx.Client(timeout=60.0) as http_client:
                 for target_model in models_to_try:
@@ -983,13 +1009,23 @@ Return ONLY valid JSON.
                         except Exception as up_err:
                             logger.warning(f"Failed to sync {rel_name} to Storj: {up_err}")
 
+            expl = data.get("explanation") or "Задача выполнена."
+            cmd_stdout = res.stdout if (res.stdout and res.stdout.strip() != expl.strip()) else ""
             return {
                 "success": (res.returncode == 0),
-                "explanation": data.get("explanation"),
-                "stdout": res.stdout,
+                "engine": "Gemini 3.1 Autonomous Engine",
+                "explanation": expl,
+                "stdout": cmd_stdout,
+                "terminal_log": (res.stdout or "") + ("\n" + res.stderr if res.stderr else ""),
                 "stderr": res.stderr,
                 "exit_code": res.returncode,
-                "cloud_synced_files": synced_to_cloud
+                "files_created": data.get("files_created", []),
+                "cloud_synced_files": synced_to_cloud,
+                "steps": [
+                    {"icon": "💭", "title": "Формирование плана действий", "status": "done"},
+                    {"icon": "⚡", "title": "Выполнение сценария в контейнере", "status": "done"},
+                    {"icon": "📁", "title": f"Создано/обновлено файлов: {len(data.get('files_created', []))}", "status": "done"} if data.get("files_created") else {"icon": "✓", "title": "Задача завершена", "status": "done"}
+                ]
             }
         except Exception as e:
             logger.error(f"Task AI error: {e}")

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>Google Antigravity Cloud</title>
   <link rel="manifest" href="manifest.json">
-  <link rel="stylesheet" href="style.css?v=3.0">
+  <link rel="stylesheet" href="style.css?v=3.1">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -114,7 +114,8 @@
         <!-- Top Breadcrumb & Actions Bar -->
         <div class="content-toolbar">
           <div class="breadcrumbs">
-            <span class="crumb-project" id="crumbProject">Агент</span>
+            <span class="crumb-project" id="crumbProject" title="Нажмите для переименования">Агент</span>
+            <button class="btn-crumb-rename" id="btnRenameProject" title="Переименовать проект">✏️</button>
             <span class="crumb-sep">/</span>
             <span class="crumb-task" id="crumbTask">Бесплатный Сервер Для Антигравити</span>
           </div>
@@ -154,6 +155,46 @@
         <!-- Floating Antigravity Input Box -->
         <div class="chat-input-wrapper">
 
+          <!-- Actions & Tools Popup Menu (+) -->
+          <div class="tools-popup" id="toolsPopup" style="display:none;">
+            <div class="tools-popup-title">Быстрые действия и инструменты</div>
+            <div class="tool-popup-item" data-cmd="$ ls -la">
+              <span class="tool-icon">💻</span>
+              <div class="tool-info">
+                <span class="tool-name">Терминал (bash)</span>
+                <span class="tool-desc">Выполнить команду ls -la в проекте</span>
+              </div>
+            </div>
+            <div class="tool-popup-item" data-cmd="git status">
+              <span class="tool-icon">⎇</span>
+              <div class="tool-info">
+                <span class="tool-name">Git статус</span>
+                <span class="tool-desc">Проверить ветку и изменения</span>
+              </div>
+            </div>
+            <div class="tool-popup-item" data-cmd="Проанализируй проект и исправь ошибки">
+              <span class="tool-icon">⚡</span>
+              <div class="tool-info">
+                <span class="tool-name">Аудит и исправление кода</span>
+                <span class="tool-desc">Автоматический поиск и устранение багов</span>
+              </div>
+            </div>
+            <div class="tool-popup-item" data-cmd="Синхронизируй проект с Storj S3 25GB">
+              <span class="tool-icon">☁️</span>
+              <div class="tool-info">
+                <span class="tool-name">Синхронизация Storj 25GB</span>
+                <span class="tool-desc">Сохранить снапшот файлов в S3</span>
+              </div>
+            </div>
+            <div class="tool-popup-item" id="btnToolAttachFile">
+              <span class="tool-icon">📎</span>
+              <div class="tool-info">
+                <span class="tool-name">Прикрепить файл</span>
+                <span class="tool-desc">Загрузить файл в рабочую папку</span>
+              </div>
+            </div>
+          </div>
+
           <!-- Slash Commands Autocomplete Popup -->
           <div class="slash-popup" id="slashPopup" style="display:none;">
             <div class="slash-popup-header">Slash Commands (Google Antigravity)</div>
@@ -188,16 +229,6 @@
           </div>
 
           <div class="input-card">
-            <!-- Quick Action Chips -->
-            <div class="quick-chips-bar">
-              <span class="quick-chip" data-cmd="$ ls -la">💻 bash</span>
-              <span class="quick-chip" data-cmd="git status">⎇ git</span>
-              <span class="quick-chip" data-cmd="Напиши unit-тесты для проекта">🧪 tests</span>
-              <span class="quick-chip" data-cmd="Синхронизируй проект с Storj S3">☁ storj</span>
-              <span class="quick-chip" data-cmd="Проанализируй код и исправь ошибки">⚡ fix</span>
-              <span class="quick-chip" data-cmd="Создай Dockerfile и docker-compose">🐳 docker</span>
-            </div>
-
             <!-- Recording Voice Status Indicator with Waveform -->
             <div class="voice-status-bar" id="voiceStatusBar" style="display:none;">
               <div class="voice-wave">
@@ -216,10 +247,10 @@
 
             <div class="input-bottom-bar">
               <div class="input-tools-left">
-                <button class="tool-btn-icon" id="btnAttach" title="Прикрепить файл или команду">+</button>
+                <button class="tool-btn-icon" id="btnAttach" title="Инструменты и команды">+</button>
                 <div class="model-pill" id="btnSelectModel">
                   <span class="sparkle-icon">✦</span>
-                  <span id="currentModelName">Gemini 3.8 Flash Medium</span>
+                  <span id="currentModelName">Gemini 3.1 Flash</span>
                   <span class="caret-icon">^</span>
                 </div>
               </div>
@@ -600,6 +631,6 @@
 
   <input type="file" id="filePicker" style="display:none;">
 
-  <script src="app.js?v=3.0"></script>
+  <script src="app.js?v=3.1"></script>
 </body>
 </html>

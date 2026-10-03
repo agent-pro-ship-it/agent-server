@@ -2212,3 +2212,222 @@ body.light-theme .task-textarea {
   transform: scale(1.05);
 }
 
+/* Breadcrumb Rename Button */
+.btn-crumb-rename {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 13px;
+  padding: 2px 4px;
+  border-radius: 4px;
+  opacity: 0.6;
+  transition: opacity 0.2s, background 0.2s;
+}
+.btn-crumb-rename:hover {
+  opacity: 1;
+  background: rgba(0, 0, 0, 0.05);
+}
+
+/* Project Item Rename Button */
+.project-top-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.btn-proj-rename {
+  margin-left: auto;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 12px;
+  opacity: 0;
+  transition: opacity 0.2s;
+  padding: 2px 4px;
+}
+.project-item:hover .btn-proj-rename {
+  opacity: 0.7;
+}
+.btn-proj-rename:hover {
+  opacity: 1;
+}
+
+/* Tools (+) Popup Menu */
+.tools-popup {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  left: 10px;
+  background: #ffffff;
+  border: 1px solid var(--border-light);
+  border-radius: 14px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.12), 0 2px 6px rgba(0, 0, 0, 0.06);
+  width: 320px;
+  max-width: calc(100vw - 32px);
+  z-index: 1000;
+  overflow: hidden;
+  animation: slideUpFade 0.15s ease-out;
+}
+@keyframes slideUpFade {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.tools-popup-title {
+  padding: 10px 14px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.tool-popup-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+  user-select: none;
+}
+.tool-popup-item:hover {
+  background: #f1f5f9;
+}
+.tool-icon {
+  font-size: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+}
+.tool-info {
+  display: flex;
+  flex-direction: column;
+}
+.tool-name {
+  font-size: 13.5px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+.tool-desc {
+  font-size: 11.5px;
+  color: var(--text-secondary);
+}
+
+/* Antigravity Process Display Cards (Accordion) */
+.antigravity-process-card {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 14px 16px;
+  margin-bottom: 12px;
+}
+.process-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: #1e293b;
+}
+.process-spinner {
+  display: inline-block;
+  animation: spinSlow 2s linear infinite;
+  color: #2563eb;
+  font-size: 15px;
+}
+@keyframes spinSlow {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+.process-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+.process-step {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: #64748b;
+  padding: 4px 0;
+}
+.process-step.active {
+  color: #1d4ed8;
+  font-weight: 500;
+}
+.process-step.done {
+  color: #059669;
+}
+.step-status {
+  margin-left: auto;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #e2e8f0;
+  color: #475569;
+}
+.process-step.active .step-status {
+  background: #dbeafe;
+  color: #1e40af;
+}
+
+/* Completed Process Accordion */
+.antigravity-process-accordion {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 10px 14px;
+  margin-bottom: 14px;
+  font-size: 13px;
+}
+.antigravity-process-accordion summary {
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  color: #334155;
+  user-select: none;
+}
+.process-summary-badge {
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 500;
+  background: #dcfce7;
+  color: #166534;
+  padding: 2px 8px;
+  border-radius: 12px;
+}
+.process-details-body {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid #e2e8f0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.terminal-drawer {
+  margin-top: 8px;
+  background: #0f172a;
+  border-radius: 8px;
+  padding: 8px 12px;
+}
+.terminal-drawer summary {
+  cursor: pointer;
+  color: #38bdf8;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  font-weight: 500;
+}
+.terminal-drawer pre {
+  margin: 8px 0 0 0;
+  padding: 0;
+  background: transparent;
+  max-height: 250px;
+  overflow-y: auto;
+  font-size: 12px;
+  color: #f1f5f9;
+}
+
+

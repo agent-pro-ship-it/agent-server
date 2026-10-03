@@ -105,6 +105,7 @@ function renderProjects() {
       <div class="project-top-row">
         <span class="folder-icon">📁</span>
         <span class="project-name">${escapeHtml(proj.name)}</span>
+        <button class="btn-proj-rename" title="Переименовать проект" onclick="event.stopPropagation(); promptRenameProject('${proj.id}')">✏️</button>
       </div>
       <div class="project-sub-row">
         <span class="project-preview">${escapeHtml(proj.task || "Antigravity Project")}</span>
@@ -113,6 +114,31 @@ function renderProjects() {
     `;
     projectsList.appendChild(item);
   });
+}
+
+async function promptRenameProject(projId) {
+  const proj = projects.find(p => p.id === projId);
+  if (!proj) return;
+  const newName = prompt("Введите новое название проекта / папки:", proj.name);
+  if (!newName || !newName.trim() || newName.trim() === proj.name) return;
+
+  const trimmed = newName.trim();
+  proj.name = trimmed;
+  if (activeProject && activeProject.id === projId) {
+    activeProject.name = trimmed;
+    if (crumbProject) crumbProject.innerText = trimmed;
+  }
+  renderProjects();
+
+  try {
+    await fetch(`${SERVER_URL}/api/projects/${projId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: trimmed })
+    });
+  } catch (e) {
+    console.warn("Error renaming project on server:", e);
+  }
 }
 
 async function selectProject(projId, reloadFiles = true) {
@@ -328,7 +354,32 @@ async function sendTask() {
   taskInput.value = "";
   taskInput.style.height = "auto";
 
-  const loadingBubble = appendAssistantMessage("⏳ *Google Antigravity выполняет задачу в папке проекта...*");
+  // Live Antigravity Process Card with Animated Steps
+  const loadingBubble = appendAssistantMessage(`
+    <div class="antigravity-process-card">
+      <div class="process-header">
+        <span class="process-spinner">✦</span>
+        <span class="process-title">Google Antigravity выполняет задачу...</span>
+      </div>
+      <div class="process-steps">
+        <div class="process-step active">
+          <span class="step-icon">💭</span>
+          <span>Анализ контекста и планирование действий</span>
+          <span class="step-status">Выполняется...</span>
+        </div>
+        <div class="process-step">
+          <span class="step-icon">⚡</span>
+          <span>Выполнение в рабочей среде проекта</span>
+          <span class="step-status">Ожидание...</span>
+        </div>
+        <div class="process-step">
+          <span class="step-icon">☁️</span>
+          <span>Синхронизация файлов в Storj 25GB</span>
+          <span class="step-status">Ожидание...</span>
+        </div>
+      </div>
+    </div>
+  `, false);
 
   try {
     const res = await fetch(`${SERVER_URL}/api/task`, {
@@ -348,19 +399,48 @@ async function sendTask() {
     const data = await res.json();
     loadingBubble.remove();
 
-    let outputHtml = "";
-    if (data.explanation) {
-      outputHtml += formatMarkdown(data.explanation);
-    }
-    if (data.stdout || data.stderr) {
-      const code = data.stdout || data.stderr;
-      outputHtml += `<pre><code>${escapeHtml(code)}</code></pre>`;
-    }
-    if (data.cloud_synced_files && data.cloud_synced_files.length > 0) {
-      outputHtml += `<p style="font-size:12px; color:#16a34a; margin-top:8px;">☁️ Синхронизировано в Storj 25GB: <code>${data.cloud_synced_files.join(", ")}</code></p>`;
-    }
+    const explanationText = data.explanation || "Задача выполнена.";
+    const terminalOutput = (data.terminal_log || data.stdout || "").trim();
+    // Only display terminal accordion if there's real command output different from explanation
+    const hasTerminalOutput = terminalOutput.length > 0 && terminalOutput !== explanationText.trim();
 
-    appendAssistantMessage(outputHtml || "Задача выполнена.");
+    const processAccordion = `
+    <details class="antigravity-process-accordion" open>
+      <summary>
+        <span class="sparkle" style="color:#2563eb;">✦</span>
+        <span>Ход выполнения Antigravity</span>
+        <span class="process-summary-badge">✓ Завершено</span>
+      </summary>
+      <div class="process-details-body">
+        <div class="process-step done">
+          <span class="step-icon">💭</span>
+          <span>Анализ задачи и планирование</span>
+          <span class="step-status" style="background:#dcfce7;color:#15803d;">✓ Готово</span>
+        </div>
+        <div class="process-step done">
+          <span class="step-icon">⚡</span>
+          <span>Выполнение в рабочей среде</span>
+          <span class="step-status" style="background:#dcfce7;color:#15803d;">✓ Готово</span>
+        </div>
+        ${data.cloud_synced_files && data.cloud_synced_files.length > 0 ? `
+        <div class="process-step done">
+          <span class="step-icon">☁️</span>
+          <span>Синхронизировано в Storj 25GB: ${data.cloud_synced_files.length} файлов</span>
+          <span class="step-status" style="background:#dcfce7;color:#15803d;">✓ Загружено</span>
+        </div>
+        ` : ''}
+        ${hasTerminalOutput ? `
+        <details class="terminal-drawer">
+          <summary>▸ Вывод терминала (${terminalOutput.split('\n').length} строк)</summary>
+          <pre><code>${escapeHtml(terminalOutput)}</code></pre>
+        </details>
+        ` : ''}
+      </div>
+    </details>
+    `;
+
+    // Render clean process accordion + formatted explanation without duplication
+    appendAssistantMessage(processAccordion + formatMarkdown(explanationText));
     if (activeProject) loadProjectFiles(activeProject.id);
 
   } catch (err) {
@@ -380,6 +460,58 @@ taskInput.addEventListener("input", function() {
   this.style.height = "auto";
   this.style.height = (this.scrollHeight) + "px";
 });
+
+// Tools (+) Popup Menu Toggle & Actions
+const btnAttach = document.getElementById("btnAttach");
+const toolsPopup = document.getElementById("toolsPopup");
+
+if (btnAttach && toolsPopup) {
+  btnAttach.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const isHidden = toolsPopup.style.display === "none" || !toolsPopup.style.display;
+    toolsPopup.style.display = isHidden ? "block" : "none";
+  });
+
+  document.addEventListener("click", (e) => {
+    if (toolsPopup && !toolsPopup.contains(e.target) && e.target !== btnAttach) {
+      toolsPopup.style.display = "none";
+    }
+  });
+
+  toolsPopup.querySelectorAll(".tool-popup-item[data-cmd]").forEach(item => {
+    item.addEventListener("click", () => {
+      const cmd = item.getAttribute("data-cmd");
+      if (cmd && taskInput) {
+        taskInput.value = cmd;
+        taskInput.focus();
+        toolsPopup.style.display = "none";
+      }
+    });
+  });
+
+  const btnToolAttachFile = document.getElementById("btnToolAttachFile");
+  if (btnToolAttachFile && filePicker) {
+    btnToolAttachFile.addEventListener("click", () => {
+      toolsPopup.style.display = "none";
+      filePicker.click();
+    });
+  }
+}
+
+// Project Renaming Handlers (Breadcrumb & Header)
+const btnRenameProject = document.getElementById("btnRenameProject");
+if (btnRenameProject) {
+  btnRenameProject.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (activeProject) promptRenameProject(activeProject.id);
+  });
+}
+if (crumbProject) {
+  crumbProject.style.cursor = "pointer";
+  crumbProject.addEventListener("click", () => {
+    if (activeProject) promptRenameProject(activeProject.id);
+  });
+}
 
 // 6. Rock-Solid Dual Voice Capture (Hardware getUserMedia + Web Speech API + Gemini AI Server Transcribe)
 let mediaStream = null;
