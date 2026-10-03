@@ -1372,6 +1372,24 @@ function openBrowserModal(rawUrl = null) {
   }
 }
 
+const btnBrowserPopup = document.getElementById("btnBrowserPopup");
+const btnBrowserAgentView = document.getElementById("btnBrowserAgentView");
+const btnBannerOpenAuth = document.getElementById("btnBannerOpenAuth");
+const browserSecurityBanner = document.getElementById("browserSecurityBanner");
+const browserScreenshotView = document.getElementById("browserScreenshotView");
+const browserScreenshotImg = document.getElementById("browserScreenshotImg");
+const browserAgentOverlay = document.getElementById("browserAgentOverlay");
+const browserAgentText = document.getElementById("browserAgentText");
+
+function openSecureAuthPopup(rawUrl = null) {
+  const targetUrl = rawUrl || (browserUrlInput ? browserUrlInput.value : "") || "https://accounts.google.com";
+  const w = 620;
+  const h = 720;
+  const left = Math.max(0, Math.round((window.screen.width - w) / 2));
+  const top = Math.max(0, Math.round((window.screen.height - h) / 2));
+  window.open(targetUrl, "AntigravitySecureAuth", `width=${w},height=${h},top=${top},left=${left},resizable=yes,scrollbars=yes`);
+}
+
 function navigateToBrowserUrl(rawUrl = null) {
   let url = (rawUrl || (browserUrlInput ? browserUrlInput.value : "")).trim();
   if (!url) return;
@@ -1379,7 +1397,47 @@ function navigateToBrowserUrl(rawUrl = null) {
     url = "https://" + url;
   }
   if (browserUrlInput) browserUrlInput.value = url;
-  if (browserIframe) browserIframe.src = url;
+
+  // Restore iframe view
+  if (browserIframe) {
+    browserIframe.style.display = "block";
+    browserIframe.src = url;
+  }
+  if (browserScreenshotView) browserScreenshotView.style.display = "none";
+
+  // Check if site requires popup auth due to X-Frame-Options (Google, GitHub, etc.)
+  const isAuthSite = url.includes("accounts.google") || url.includes("github.com/login") || url.includes("render.com") || url.includes("login");
+  if (browserSecurityBanner) {
+    browserSecurityBanner.style.display = isAuthSite ? "flex" : "none";
+  }
+}
+
+async function loadAgentBrowserScreenshot(targetUrl = null) {
+  const url = targetUrl || (browserUrlInput ? browserUrlInput.value : "");
+  if (!url) return;
+
+  if (browserAgentOverlay) {
+    browserAgentOverlay.style.display = "flex";
+    if (browserAgentText) browserAgentText.innerText = "Серверный агент загружает страницу...";
+  }
+
+  try {
+    const res = await fetch(`${SERVER_URL}/api/browser/navigate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url: url })
+    });
+    const data = await res.json();
+    if (data.screenshot_base64 && browserScreenshotImg && browserScreenshotView) {
+      browserScreenshotImg.src = "data:image/jpeg;base64," + data.screenshot_base64;
+      browserScreenshotView.style.display = "flex";
+      if (browserIframe) browserIframe.style.display = "none";
+    }
+  } catch(e) {
+    console.warn("Agent browser error:", e);
+  } finally {
+    if (browserAgentOverlay) browserAgentOverlay.style.display = "none";
+  }
 }
 
 if (btnHeaderBrowser) btnHeaderBrowser.addEventListener("click", () => openBrowserModal());
@@ -1389,6 +1447,10 @@ if (btnToolOpenBrowser) btnToolOpenBrowser.addEventListener("click", () => {
 });
 if (btnCloseBrowser) btnCloseBrowser.addEventListener("click", () => modalBrowser.classList.remove("active"));
 if (btnBrowserGo) btnBrowserGo.addEventListener("click", () => navigateToBrowserUrl());
+if (btnBrowserPopup) btnBrowserPopup.addEventListener("click", () => openSecureAuthPopup());
+if (btnBannerOpenAuth) btnBannerOpenAuth.addEventListener("click", () => openSecureAuthPopup());
+if (btnBrowserAgentView) btnBrowserAgentView.addEventListener("click", () => loadAgentBrowserScreenshot());
+
 if (browserUrlInput) {
   browserUrlInput.addEventListener("keydown", (e) => {
     if (e.key === "Enter") {
@@ -1399,7 +1461,7 @@ if (browserUrlInput) {
 }
 if (btnBrowserExternal) {
   btnBrowserExternal.addEventListener("click", () => {
-    const u = (browserUrlInput && browserUrlInput.value) || "https://google.com";
+    const u = (browserUrlInput && browserUrlInput.value) || "https://accounts.google.com";
     window.open(u, "_blank");
   });
 }
