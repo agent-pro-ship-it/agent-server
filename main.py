@@ -559,7 +559,7 @@ class EdgeTTSRequest(BaseModel):
     text: str
     voice: Optional[str] = "ru-RU-DmitryNeural"
 
-async def synthesize_edge_studio_voice(text: str, voice: str = "ru-RU-DmitryNeural") -> Optional[str]:
+async def synthesize_edge_studio_voice(text: str, voice: str = "ru-RU-DmitryNeural", retries: int = 3) -> Optional[str]:
     """Synthesizes crystal-clear Microsoft Edge studio voice and returns base64 MP3."""
     import ssl
     import base64
@@ -577,29 +577,32 @@ async def synthesize_edge_studio_voice(text: str, voice: str = "ru-RU-DmitryNeur
     if not clean:
         return None
 
-    try:
-        c = edge_tts.Communicate(clean, voice)
-        chunks = []
-        async for chunk in c.stream():
-            if chunk.get("type") == "audio":
-                chunks.append(chunk["data"])
-        if not chunks:
-            raise RuntimeError("No audio chunks received from Edge TTS")
-        raw = b"".join(chunks)
-        return base64.b64encode(raw).decode("utf-8")
-    except Exception as err:
-        logger.warning(f"synthesize_edge_studio_voice error: {err}")
-        raise err
+    last_err = None
+    for attempt in range(1, retries + 1):
+        try:
+            c = edge_tts.Communicate(clean, voice)
+            chunks = []
+            async for chunk in c.stream():
+                if chunk.get("type") == "audio":
+                    chunks.append(chunk["data"])
+            if chunks:
+                raw = b"".join(chunks)
+                return base64.b64encode(raw).decode("utf-8")
+        except Exception as err:
+            last_err = err
+            logger.warning(f"Edge TTS attempt {attempt} failed: {err}")
+            await asyncio.sleep(0.2)
+
+    logger.error(f"synthesize_edge_studio_voice all {retries} attempts failed: {last_err}")
+    return None
 
 @app.post("/api/edge-tts")
 async def api_edge_tts(req: EdgeTTSRequest):
     """Generates crystal-clear Microsoft Edge studio voice audio."""
-    try:
-        audio_b64 = await synthesize_edge_studio_voice(req.text, voice=req.voice or "ru-RU-DmitryNeural")
-        return {"success": True, "audio_base64": audio_b64, "voice": req.voice or "ru-RU-DmitryNeural"}
-    except Exception as e:
-        logger.error(f"Edge TTS endpoint exception: {e}")
-        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {str(e)}")
+    audio_b64 = await synthesize_edge_studio_voice(req.text, voice=req.voice or "ru-RU-DmitryNeural")
+    if not audio_b64:
+        raise HTTPException(status_code=500, detail="Failed to synthesize Edge studio audio")
+    return {"success": True, "audio_base64": audio_b64, "voice": req.voice or "ru-RU-DmitryNeural"}
 
 @app.post("/api/gemini/cascade-chat")
 async def api_gemini_cascade_chat(req: LiveChatRequest):
