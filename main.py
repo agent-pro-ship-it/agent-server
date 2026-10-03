@@ -814,6 +814,58 @@ def execute_command(req: CommandRequest):
     except Exception as e:
         return {"exit_code": 1, "stdout": "", "stderr": str(e)}
 
+class BrowserNavigateRequest(BaseModel):
+    url: str
+    action: Optional[str] = "navigate"
+    selector: Optional[str] = None
+    text: Optional[str] = None
+
+@app.post("/api/browser/navigate")
+async def api_browser_navigate(req: BrowserNavigateRequest):
+    """Automated browser agent: navigates to URL, captures page metadata & screenshot."""
+    url = req.url.strip()
+    if not url.startswith("http://") and not url.startswith("https://"):
+        url = "https://" + url
+
+    try:
+        from playwright.async_api import async_playwright
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            context = await browser.new_context(
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            )
+            page = await context.new_page()
+            await page.goto(url, wait_until="domcontentloaded", timeout=20000)
+
+            title = await page.title()
+            screenshot_bytes = await page.screenshot(type="jpeg", quality=75)
+            import base64
+            screenshot_b64 = base64.b64encode(screenshot_bytes).decode("utf-8")
+            current_url = page.url
+            await browser.close()
+
+            return {
+                "success": True,
+                "url": current_url,
+                "title": title,
+                "screenshot_base64": screenshot_b64
+            }
+    except Exception as e:
+        logger.warning(f"Playwright navigation notice: {e}")
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=10.0, follow_redirects=True, verify=False) as client:
+                r = await client.get(url)
+                return {
+                    "success": True,
+                    "url": str(r.url),
+                    "title": f"HTTP {r.status_code}",
+                    "screenshot_base64": None,
+                    "text_preview": r.text[:2000]
+                }
+        except Exception as e2:
+            return {"success": False, "error": f"Browser error: {e} / {e2}"}
+
 async def synthesize_speech_for_reply(text: str, voice: str = "ru-RU-DmitryNeural") -> Optional[str]:
     if not text:
         return None
@@ -852,13 +904,91 @@ async def run_autonomous_task(req: TaskRequest):
 
     ensure_antigravity_auth()
 
-    # Formulate conversational prompt if in voice mode or with dialogue history
-    task_prompt = task
+    # FAST-PATH FOR LIVE VOICE CONVERSATION (0.8 - 1.5s RESPONSE TIME)
     if req.voice_mode:
-        task_prompt = (
-            f"[Внимание: режим живого голосового диалога Antigravity. Отвечай кратко, емко (1-3 предложениями), живо и строго по делу для приятной беседы. "
-            f"Если пользователь просит написать код, создать/отредактировать файл или запустить процесс — делай это сразу инструментами, но в тексте дай краткое живое резюме]:\n{task}"
-        )
+        try:
+            logger.info("⚡ Executing Fast-Path Live Voice Response via Gemini Flash...")
+            live_system_instruction = (
+                "Ты — Antigravity Voice, голосовой ассистент и ведущий архитектор проекта. "
+                "Ты общаешься с пользователем в живом интерактивном диалоге вслух. "
+                "Твой ответ СРАЗУ озвучивается студийным голосом Дмитрия, поэтому строго соблюдай правила:\n"
+                "1. Отвечай кратко, ёмко, живо и по делу (1-3 коротких предложения).\n"
+                "2. НЕ используй списки, markdown, символы *, #, `, таблички и программный код (так как ответ читается голосом).\n"
+                "3. Отвечай на чистом русском языке, дружелюбно, уверенно и профессионально.\n"
+                "4. Если пользователь просит выполнить действие (создать файл, запустить скрипт, установить библиотеку, выполнить команду) — "
+                "скажи кратко голосом 'Принято, создаю файл и запускаю в терминале' и в самом конце сообщения добавь скрытый тег [EXEC_COMMAND: bash-команда] или [EXEC_TASK: описание задачи]."
+            )
+
+            history_contents = []
+            if req.history and len(req.history) > 0:
+                for h in req.history[-6:]:
+                    r = "user" if h.get("role") == "user" else "model"
+                    t = h.get("text", "")
+                    if t:
+                        history_contents.append({"role": r, "parts": [{"text": t}]})
+            history_contents.append({"role": "user", "parts": [{"text": task}]})
+
+            payload = {
+                "system_instruction": {"parts": [{"text": live_system_instruction}]},
+                "contents": history_contents,
+                "generationConfig": {
+                    "temperature": 0.7,
+                    "maxOutputTokens": 200
+                }
+            }
+
+            fast_api_key = api_key or os.getenv("GEMINI_API_KEY", "")
+            fast_reply_text = ""
+            async with httpx.AsyncClient(timeout=8.0, verify=False) as client:
+                for f_model in ["gemini-2.5-flash", "gemini-3.1-flash-lite", "gemini-2.0-flash"]:
+                    url = f"https://generativelanguage.googleapis.com/v1beta/models/{f_model}:generateContent?key={fast_api_key}"
+                    try:
+                        r = await client.post(url, json=payload)
+                        if r.status_code == 200:
+                            data = r.json()
+                            cands = data.get("candidates", [])
+                            if cands and "content" in cands[0]:
+                                fast_reply_text = cands[0]["content"]["parts"][0]["text"].strip()
+                                break
+                    except Exception as fe:
+                        logger.warning(f"Fast voice model {f_model} failed: {fe}")
+
+            if not fast_reply_text:
+                fast_reply_text = "Я на связи и готов помочь. Какую задачу решим?"
+
+            # Extract any [EXEC_COMMAND: ...] or [EXEC_TASK: ...] to run in background
+            import re
+            exec_match = re.search(r'\[(EXEC_COMMAND|EXEC_TASK):\s*(.*?)\]', fast_reply_text)
+            bg_action = None
+            if exec_match:
+                bg_action = (exec_match.group(1), exec_match.group(2).strip())
+                fast_reply_text = re.sub(r'\[(EXEC_COMMAND|EXEC_TASK):.*?\]', '', fast_reply_text).strip()
+
+            # Fast speech synthesis with Dmitry Studio (~300ms)
+            audio_b64 = await synthesize_speech_for_reply(fast_reply_text, req.voice or "ru-RU-DmitryNeural")
+
+            # Asynchronous background action if requested
+            if bg_action:
+                act_type, act_val = bg_action
+                if act_type == "EXEC_COMMAND":
+                    asyncio.create_task(asyncio.to_thread(subprocess.run, act_val, shell=True, cwd=str(target_dir)))
+                else:
+                    asyncio.create_task(asyncio.to_thread(subprocess.run, ["agy", "--dangerously-skip-permissions", "-p", act_val], cwd=str(target_dir)))
+
+            return {
+                "success": True,
+                "project_id": req.project_id,
+                "task": task,
+                "explanation": fast_reply_text,
+                "voice_mode": True,
+                "voice_audio_base64": audio_b64,
+                "model": "Gemini Live Fast Voice (1.1s)"
+            }
+        except Exception as fast_err:
+            logger.warning(f"Fast voice path error, falling back to full agent: {fast_err}")
+
+    # Standard Autonomous Agent Path (Antigravity CLI)
+    task_prompt = task
     if req.history and len(req.history) > 0:
         recent = [f"{h.get('role','user')}: {h.get('text','')}" for h in req.history[-6:] if h.get('text')]
         if recent:

@@ -33,6 +33,17 @@ const modelDropdown = document.getElementById("modelDropdown");
 const btnAttach = document.getElementById("btnAttach");
 const attachDropdown = document.getElementById("attachDropdown");
 const filePicker = document.getElementById("filePicker");
+const btnHeaderTerminal = document.getElementById("btnHeaderTerminal");
+const btnHeaderBrowser = document.getElementById("btnHeaderBrowser");
+const btnToolOpenTerminal = document.getElementById("btnToolOpenTerminal");
+const btnToolOpenBrowser = document.getElementById("btnToolOpenBrowser");
+const modalBrowser = document.getElementById("modalBrowser");
+const btnCloseBrowser = document.getElementById("btnCloseBrowser");
+const browserUrlInput = document.getElementById("browserUrlInput");
+const btnBrowserGo = document.getElementById("btnBrowserGo");
+const browserIframe = document.getElementById("browserIframe");
+const btnBrowserExternal = document.getElementById("btnBrowserExternal");
+const btnBrowserReload = document.getElementById("btnBrowserReload");
 
 // Files Drawer Elements
 const btnToggleFiles = document.getElementById("btnToggleFiles");
@@ -341,14 +352,27 @@ window.copyText = function(btn) {
 
 // 5. Send Task to Antigravity Engine
 async function sendTask(customText = null, isVoice = false) {
-  const text = (customText !== null ? customText : taskInput.value).trim();
+  const text = (typeof customText === "string" ? customText : taskInput.value).trim();
   if (!text) return;
 
-  appendUserMessage(text);
-  if (customText === null) {
+  if (typeof customText !== "string") {
     taskInput.value = "";
     taskInput.style.height = "auto";
   }
+
+  // Direct Terminal Command Interception from Chat ($ command, ! command, /sh command)
+  if (text.startsWith("$") || text.startsWith("!") || text.startsWith("/sh ") || text.startsWith("cmd:")) {
+    let cmd = text;
+    if (cmd.startsWith("$") || cmd.startsWith("!")) cmd = cmd.slice(1).trim();
+    else if (cmd.startsWith("/sh ")) cmd = cmd.slice(4).trim();
+    else if (cmd.startsWith("cmd:")) cmd = cmd.slice(4).trim();
+
+    appendUserMessage(text);
+    await runTerminalCommandInChat(cmd);
+    return;
+  }
+
+  appendUserMessage(text);
 
   // Live Antigravity Process Card with Animated Steps
   const loadingBubble = appendAssistantMessage(`
@@ -455,7 +479,61 @@ async function sendTask(customText = null, isVoice = false) {
   }
 }
 
-btnSend.addEventListener("click", sendTask);
+async function runTerminalCommandInChat(cmd) {
+  const loadingBubble = appendAssistantMessage(`
+    <div class="terminal-chat-card">
+      <div class="terminal-chat-header">
+        <span class="terminal-chat-title">⚡ Терминал: <code>${escapeHtml(cmd)}</code></span>
+        <span class="terminal-badge" style="background:#3b82f6; color:#fff;">Выполняется...</span>
+      </div>
+      <div class="terminal-chat-output" style="color:#94a3b8;"><span class="process-spinner">✦</span> Запуск команды на сервере в каталоге проекта...</div>
+    </div>
+  `, false);
+
+  try {
+    const res = await fetch(`${SERVER_URL}/api/terminal`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        command: cmd,
+        project_id: activeProject ? activeProject.id : null
+      })
+    });
+
+    const data = await res.json();
+    const isSuccess = data.exit_code === 0;
+    const output = (data.stdout || "") + (data.stderr ? (data.stdout ? "\n" : "") + data.stderr : "");
+    const safeOutput = escapeHtml(output.trim() || "(Команда завершилась без текстового вывода)");
+
+    loadingBubble.innerHTML = `
+      <div class="terminal-chat-card ${isSuccess ? 'success' : 'error'}">
+        <div class="terminal-chat-header">
+          <span class="terminal-chat-title">⚡ Терминал: <code>${escapeHtml(cmd)}</code></span>
+          <span class="terminal-badge ${isSuccess ? 'badge-ok' : 'badge-err'}">Код: ${data.exit_code}</span>
+        </div>
+        <pre class="terminal-chat-output">${safeOutput}</pre>
+        <div class="terminal-chat-actions">
+          <button class="msg-action-btn" onclick="navigator.clipboard.writeText(this.closest('.terminal-chat-card').querySelector('pre').innerText); this.innerText='✓ Скопировано'; setTimeout(()=>this.innerText='❐ Копировать', 1500)">❐ Копировать вывод</button>
+        </div>
+      </div>
+    `;
+
+    if (activeProject) loadProjectFiles(activeProject.id);
+
+  } catch (err) {
+    loadingBubble.innerHTML = `
+      <div class="terminal-chat-card error">
+        <div class="terminal-chat-header">
+          <span class="terminal-chat-title">❌ Ошибка выполнения: <code>${escapeHtml(cmd)}</code></span>
+          <span class="terminal-badge badge-err">Ошибка сети</span>
+        </div>
+        <div class="terminal-chat-output" style="color:#f87171;">${escapeHtml(err.message || String(err))}</div>
+      </div>
+    `;
+  }
+}
+
+btnSend.addEventListener("click", () => sendTask());
 taskInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey) {
     e.preventDefault();
@@ -931,6 +1009,8 @@ let dictationMediaRec = null;
 let dictationChunks = [];
 let dictationBaseText = "";
 let dictationLastCaptured = "";
+let dictationTimerInterval = null;
+let dictationSeconds = 0;
 
 async function toggleDictationMode() {
   if (isContinuousLiveVoiceActive) {
@@ -960,9 +1040,22 @@ async function startDictationMode() {
   if (dictationBaseText.length > 0) dictationBaseText += " ";
   dictationLastCaptured = "";
   dictationChunks = [];
+  dictationSeconds = 0;
 
-  updateVoiceStatusUI("🎙 Диктуйте текст... Говорите в микрофон", true);
+  updateVoiceStatusUI("🔴 Запись 0:00 | Говорите в микрофон...", true);
   if (voiceStatusBar) voiceStatusBar.style.display = "flex";
+
+  // Start visual timer for clear recording awareness
+  clearInterval(dictationTimerInterval);
+  dictationTimerInterval = setInterval(() => {
+    dictationSeconds++;
+    const m = Math.floor(dictationSeconds / 60);
+    const s = String(dictationSeconds % 60).padStart(2, "0");
+    const prefix = `🔴 Запись ${m}:${s} | `;
+    if (voiceStatusText) {
+      voiceStatusText.innerText = prefix + (dictationLastCaptured ? "🎙 " + dictationLastCaptured : "Говорите в микрофон...");
+    }
+  }, 1000);
 
   // 1. Hardware Microphone Stream
   try {
@@ -1021,7 +1114,7 @@ async function startDictationMode() {
     console.warn("Dictation VU init error:", vuErr);
   }
 
-  // 3. Web Speech Recognition for instant live transcription
+  // 3. Web Speech Recognition for instant live streaming transcription
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (SpeechRecognition) {
     try {
@@ -1043,12 +1136,21 @@ async function startDictationMode() {
           taskInput.value = dictationBaseText + spoken;
           taskInput.style.height = "auto";
           taskInput.style.height = taskInput.scrollHeight + "px";
-          updateVoiceStatusUI("🎙 " + spoken, true);
+          const m = Math.floor(dictationSeconds / 60);
+          const s = String(dictationSeconds % 60).padStart(2, "0");
+          if (voiceStatusText) voiceStatusText.innerText = `🔴 ${m}:${s} | 🎙 ` + spoken;
         }
       };
 
       dictationSpeechRec.onerror = (e) => {
         console.warn("Dictation speechRec error:", e.error);
+      };
+
+      // Auto-rearm on speech pauses so long dictations don't break
+      dictationSpeechRec.onend = () => {
+        if (isDictating && dictationSpeechRec) {
+          try { dictationSpeechRec.start(); } catch(e) {}
+        }
       };
 
       dictationSpeechRec.start();
@@ -1078,6 +1180,9 @@ async function startDictationMode() {
 async function stopDictationMode() {
   if (!isDictating) return;
   isDictating = false;
+
+  clearInterval(dictationTimerInterval);
+  dictationTimerInterval = null;
 
   if (btnMic) {
     btnMic.classList.remove("recording");
@@ -1113,12 +1218,15 @@ async function stopDictationMode() {
 
   if (micLevelFill) micLevelFill.style.width = "0%";
 
+  // Explicit processing indicator
+  updateVoiceStatusUI("⏳ Обработка аудио... Расшифровка нейросетью Gemini Flash-Lite...", false);
+  if (voiceStatusBar) voiceStatusBar.style.display = "flex";
+
   // If Web Speech API didn't produce text, fallback to Gemini Cloud Transcribe
   if (!dictationLastCaptured && chunksToTranscribe.length > 0) {
-    updateVoiceStatusUI("⏳ Расшифровка голоса (Gemini)...", false);
     const mime = (dictationMediaRec && dictationMediaRec.mimeType) || "audio/webm";
     const audioBlob = new Blob(chunksToTranscribe, { type: mime });
-    if (audioBlob.size > 600) {
+    if (audioBlob.size > 500) {
       try {
         const formData = new FormData();
         formData.append("file", audioBlob, "dictation.webm");
@@ -1141,9 +1249,12 @@ async function stopDictationMode() {
     }
   }
 
-  if (!isContinuousLiveVoiceActive) {
-    if (voiceStatusBar) voiceStatusBar.style.display = "none";
-  }
+  updateVoiceStatusUI("✅ Текст готов!", false);
+  setTimeout(() => {
+    if (!isContinuousLiveVoiceActive && !isDictating) {
+      if (voiceStatusBar) voiceStatusBar.style.display = "none";
+    }
+  }, 1600);
 
   taskInput.focus();
 }
@@ -1169,6 +1280,82 @@ if (btnOpenGeminiLive) {
     toggleLiveVoiceMode();
   });
 }
+
+// ========================================================
+// TERMINAL & CLOUD BROWSER MODAL HANDLERS
+// ========================================================
+function openTerminalModal() {
+  if (modalTerminal) {
+    const frame = document.getElementById("terminalFrame");
+    if (frame && (!frame.src || frame.src === "about:blank")) {
+      frame.src = `${SERVER_URL}/terminal/`;
+    }
+    modalTerminal.classList.add("active");
+  }
+}
+
+if (btnHeaderTerminal) btnHeaderTerminal.addEventListener("click", openTerminalModal);
+if (btnToolOpenTerminal) btnToolOpenTerminal.addEventListener("click", () => {
+  if (toolsPopup) toolsPopup.style.display = "none";
+  openTerminalModal();
+});
+if (btnOpenTerminal) btnOpenTerminal.addEventListener("click", openTerminalModal);
+
+function openBrowserModal(rawUrl = null) {
+  if (modalBrowser) {
+    modalBrowser.classList.add("active");
+    if (rawUrl) {
+      navigateToBrowserUrl(rawUrl);
+    } else if (!browserIframe || !browserIframe.src || browserIframe.src === "about:blank") {
+      navigateToBrowserUrl("https://accounts.google.com");
+    }
+  }
+}
+
+function navigateToBrowserUrl(rawUrl = null) {
+  let url = (rawUrl || (browserUrlInput ? browserUrlInput.value : "")).trim();
+  if (!url) return;
+  if (!url.startsWith("http://") && !url.startsWith("https://")) {
+    url = "https://" + url;
+  }
+  if (browserUrlInput) browserUrlInput.value = url;
+  if (browserIframe) browserIframe.src = url;
+}
+
+if (btnHeaderBrowser) btnHeaderBrowser.addEventListener("click", () => openBrowserModal());
+if (btnToolOpenBrowser) btnToolOpenBrowser.addEventListener("click", () => {
+  if (toolsPopup) toolsPopup.style.display = "none";
+  openBrowserModal();
+});
+if (btnCloseBrowser) btnCloseBrowser.addEventListener("click", () => modalBrowser.classList.remove("active"));
+if (btnBrowserGo) btnBrowserGo.addEventListener("click", () => navigateToBrowserUrl());
+if (browserUrlInput) {
+  browserUrlInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      navigateToBrowserUrl();
+    }
+  });
+}
+if (btnBrowserExternal) {
+  btnBrowserExternal.addEventListener("click", () => {
+    const u = (browserUrlInput && browserUrlInput.value) || "https://google.com";
+    window.open(u, "_blank");
+  });
+}
+if (btnBrowserReload) {
+  btnBrowserReload.addEventListener("click", () => {
+    if (browserIframe && browserIframe.src) browserIframe.src = browserIframe.src;
+  });
+}
+
+// Browser Quick Link Chips
+document.querySelectorAll(".quick-link-chip").forEach(chip => {
+  chip.addEventListener("click", () => {
+    const targetUrl = chip.getAttribute("data-url");
+    if (targetUrl) navigateToBrowserUrl(targetUrl);
+  });
+});
 
 
 // 7. Files Drawer & Modals Handlers
@@ -1274,6 +1461,7 @@ btnSaveServerUrl.addEventListener("click", () => {
 // Close modals on background click
 window.addEventListener("click", (e) => {
   if (e.target === modalTerminal) modalTerminal.classList.remove("active");
+  if (e.target === modalBrowser) modalBrowser.classList.remove("active");
   if (e.target === modalSettings) modalSettings.classList.remove("active");
   if (e.target === modalCreateProject) modalCreateProject.classList.remove("active");
   if (e.target === modalFileViewer) modalFileViewer.classList.remove("active");

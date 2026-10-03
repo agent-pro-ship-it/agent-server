@@ -40,6 +40,8 @@
       </div>
 
       <div class="window-right">
+        <button class="win-icon-btn" id="btnHeaderTerminal" title="Открыть консоль терминала (bash)">>_</button>
+        <button class="win-icon-btn" id="btnHeaderBrowser" title="Открыть встроенный браузер (авторизация и веб-автоматизация)">🌐</button>
         <button class="btn-live-sparkle" id="btnOpenGeminiLive" title="Голосовой Live-диалог со студийным голосом для обсуждения идей">
           <span class="live-dot-pulse"></span>
           <span>✨ Gemini Live</span>
@@ -184,6 +186,20 @@
               <div class="tool-info">
                 <span class="tool-name">Синхронизация Storj 25GB</span>
                 <span class="tool-desc">Сохранить снапшот файлов в S3</span>
+              </div>
+            </div>
+            <div class="tool-popup-item" id="btnToolOpenTerminal">
+              <span class="tool-icon">💻</span>
+              <div class="tool-info">
+                <span class="tool-name">Консоль терминала</span>
+                <span class="tool-desc">Интерактивный bash PTY в проекте</span>
+              </div>
+            </div>
+            <div class="tool-popup-item" id="btnToolOpenBrowser">
+              <span class="tool-icon">🌐</span>
+              <div class="tool-info">
+                <span class="tool-name">Браузер (Web View & Auth)</span>
+                <span class="tool-desc">Авторизация в сервисах и веб-страницы</span>
               </div>
             </div>
             <div class="tool-popup-item" id="btnToolAttachFile">
@@ -492,6 +508,45 @@
       </div>
       <div class="modal-body-terminal">
         <iframe src="https://agent-master-server.onrender.com/terminal/" id="terminalFrame"></iframe>
+      </div>
+    </div>
+  </div>
+
+  <!-- Browser Modal (Web Auth & Automated Workflows) -->
+  <div class="modal-overlay" id="modalBrowser">
+    <div class="modal-container-large modal-container-browser">
+      <div class="modal-header browser-header">
+        <div class="browser-nav-bar">
+          <button class="browser-btn" id="btnBrowserBack" title="Назад">◀</button>
+          <button class="browser-btn" id="btnBrowserForward" title="Вперед">▶</button>
+          <button class="browser-btn" id="btnBrowserReload" title="Обновить">↻</button>
+          <div class="browser-url-wrapper">
+            <span class="browser-lock-icon">🔒</span>
+            <input type="text" class="browser-url-input" id="browserUrlInput" placeholder="https://..." value="https://google.com">
+            <button class="browser-go-btn" id="btnBrowserGo">Перейти</button>
+          </div>
+          <button class="browser-btn" id="btnBrowserExternal" title="Открыть в новой вкладке браузера">↗</button>
+        </div>
+        <button class="modal-close-btn" id="btnCloseBrowser">✕</button>
+      </div>
+      <div class="browser-quick-links">
+        <button class="quick-link-chip" data-url="https://accounts.google.com">Google Auth</button>
+        <button class="quick-link-chip" data-url="https://github.com/login">GitHub</button>
+        <button class="quick-link-chip" data-url="https://web.telegram.org">Telegram Web</button>
+        <button class="quick-link-chip" data-url="https://dashboard.render.com">Render</button>
+        <button class="quick-link-chip" data-url="https://antigravity.google.com">Antigravity</button>
+      </div>
+      <div class="modal-body-browser">
+        <iframe id="browserIframe" src="about:blank" sandbox="allow-same-origin allow-scripts allow-popups allow-forms allow-modals"></iframe>
+        <div class="browser-screenshot-view" id="browserScreenshotView" style="display:none;">
+          <img id="browserScreenshotImg" src="" alt="Web snapshot">
+        </div>
+        <div class="browser-agent-overlay" id="browserAgentOverlay" style="display:none;">
+          <div class="browser-agent-status">
+            <span class="process-spinner">✦</span>
+            <span id="browserAgentText">Загрузка страницы...</span>
+          </div>
+        </div>
       </div>
     </div>
   </div>
