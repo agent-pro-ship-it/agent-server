@@ -561,6 +561,7 @@ class EdgeTTSRequest(BaseModel):
 
 async def synthesize_edge_studio_voice(text: str, voice: str = "ru-RU-DmitryNeural", retries: int = 3) -> Optional[str]:
     """Synthesizes crystal-clear Microsoft Edge studio voice and returns base64 MP3."""
+    import asyncio
     import ssl
     import base64
     import re
@@ -649,7 +650,12 @@ async def api_gemini_cascade_chat(req: LiveChatRequest):
                     candidates = data.get("candidates", [])
                     if candidates and "content" in candidates[0]:
                         reply = candidates[0]["content"]["parts"][0]["text"].strip()
-                        audio_b64 = await synthesize_edge_studio_voice(reply, voice=req.voice or "ru-RU-DmitryNeural")
+                        audio_b64 = None
+                        try:
+                            audio_b64 = await synthesize_edge_studio_voice(reply, voice=req.voice or "ru-RU-DmitryNeural")
+                        except Exception as tts_err:
+                            logger.warning(f"Edge TTS error in cascade: {tts_err}")
+
                         return {
                             "success": True,
                             "reply": reply,
