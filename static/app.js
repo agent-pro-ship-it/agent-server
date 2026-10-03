@@ -1284,7 +1284,8 @@ let liveAudioContext = null;
 let liveAnalyser = null;
 let liveAnimFrameId = null;
 let liveMediaRecorder = null;
-let liveAudioChunks = [];
+let liveRollingBuffer = [];
+let liveActiveSpeechChunks = [];
 let liveUserSpokeSound = false;
 
 // 1. Voice Detection (Microsoft Edge Natural Studio Voice prioritized)
@@ -1418,10 +1419,14 @@ function startVolumeVisualizer() {
 
 function startLiveMediaRecorder() {
   if (!liveAudioStream || typeof MediaRecorder === "undefined") return;
+
+  // Never stop or recreate if already recording - avoids Android InvalidStateError
+  if (liveMediaRecorder && liveMediaRecorder.state === "recording") {
+    liveActiveSpeechChunks = [];
+    return;
+  }
+
   try {
-    if (liveMediaRecorder && liveMediaRecorder.state !== "inactive") {
-      liveMediaRecorder.stop();
-    }
     let options = {};
     if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
       options = { mimeType: 'audio/webm;codecs=opus' };
@@ -1431,15 +1436,35 @@ function startLiveMediaRecorder() {
       options = { mimeType: 'audio/mp4' };
     }
     liveMediaRecorder = new MediaRecorder(liveAudioStream, options);
-    liveAudioChunks = [];
+    liveActiveSpeechChunks = [];
+    liveRollingBuffer = [];
+
     liveMediaRecorder.ondataavailable = (e) => {
       if (e.data && e.data.size > 0) {
-        liveAudioChunks.push(e.data);
-        if (liveAudioChunks.length > 60) {
-          liveAudioChunks.shift();
+        const isAudioPlaying = liveAudioPlayer && !liveAudioPlayer.paused;
+        if (liveIsThinking || isAudioPlaying) {
+          // Assistant is speaking or thinking: clear incoming voice
+          liveRollingBuffer = [];
+          liveActiveSpeechChunks = [];
+          return;
+        }
+
+        if (liveUserSpokeSound) {
+          // User is actively speaking: record speech chunks
+          liveActiveSpeechChunks.push(e.data);
+          if (liveActiveSpeechChunks.length > 70) {
+            liveActiveSpeechChunks.shift();
+          }
+        } else {
+          // Ambient silence: keep rolling pre-roll buffer of 3 chunks (~600ms)
+          liveRollingBuffer.push(e.data);
+          if (liveRollingBuffer.length > 3) {
+            liveRollingBuffer.shift();
+          }
         }
       }
     };
+
     liveMediaRecorder.start(200);
   } catch (e) {
     console.warn("Live MediaRecorder start failed:", e);
@@ -1550,15 +1575,18 @@ async function handleSilenceTimeout() {
   }
 
   // Dual-Engine: Transcribe recorded hardware audio with Gemini AI
-  if (liveMediaRecorder && liveAudioChunks.length > 0) {
+  const combinedChunks = [...liveRollingBuffer, ...liveActiveSpeechChunks];
+  liveActiveSpeechChunks = [];
+  liveRollingBuffer = [];
+
+  if (combinedChunks.length > 0 && liveMediaRecorder) {
     const status = document.getElementById("liveStatusText");
     if (status) status.innerText = "⏳ Распознаю речь через Gemini...";
 
     const mime = liveMediaRecorder.mimeType || "audio/webm";
-    const blob = new Blob(liveAudioChunks, { type: mime });
-    liveAudioChunks = [];
+    const blob = new Blob(combinedChunks, { type: mime });
 
-    if (blob.size > 400) {
+    if (blob.size > 350) {
       liveIsThinking = true;
       try {
         const formData = new FormData();
@@ -1654,6 +1682,8 @@ function stopLiveSession() {
   liveIsListening = false;
   liveIsThinking = false;
   liveUserSpokeSound = false;
+  liveActiveSpeechChunks = [];
+  liveRollingBuffer = [];
 
   if (liveAudioPlayer) {
     try {
@@ -1675,6 +1705,7 @@ function stopLiveSession() {
   if (liveMediaRecorder && liveMediaRecorder.state !== "inactive") {
     try { liveMediaRecorder.stop(); } catch(e) {}
   }
+  liveMediaRecorder = null;
   if (liveAudioStream) {
     liveAudioStream.getTracks().forEach(track => track.stop());
     liveAudioStream = null;
@@ -1748,19 +1779,35 @@ async function handleUserLiveUtterance(userText) {
 
       // Speak reply with TRUE studio quality Microsoft Edge Neural Voice
       speakNaturalReply(reply, audioB64, () => {
-        liveIsThinking = false;
-        const modal = document.getElementById("modalGeminiLive");
-        if (modal && modal.classList.contains("active") && liveIsListening) {
-          const liveOrbEl = document.getElementById("liveOrb");
-          if (liveOrbEl) liveOrbEl.className = "live-orb listening";
-          const statusEl = document.getElementById("liveStatusText");
-          if (statusEl) statusEl.innerText = "🟢 Слушаю вас... Говорите дальше";
-
-          liveAudioChunks = [];
+        setTimeout(() => {
+          liveIsThinking = false;
+          liveUserSpokeSound = false;
+          liveActiveSpeechChunks = [];
+          liveRollingBuffer = [];
           liveCurrentSpeechText = "";
-          startLiveMediaRecorder();
-          startLiveSpeechRecognition();
-        }
+
+          // Resume audio context and ensure mic track active
+          if (liveAudioContext && liveAudioContext.state === "suspended") {
+            try { liveAudioContext.resume(); } catch(e) {}
+          }
+          if (liveAudioStream) {
+            try {
+              liveAudioStream.getAudioTracks().forEach(t => t.enabled = true);
+            } catch(e) {}
+          }
+
+          const modal = document.getElementById("modalGeminiLive");
+          if (modal && modal.classList.contains("active") && liveIsListening) {
+            const liveOrbEl = document.getElementById("liveOrb");
+            if (liveOrbEl) liveOrbEl.className = "live-orb listening";
+            const statusEl = document.getElementById("liveStatusText");
+            if (statusEl) statusEl.innerText = "🟢 Слушаю вас... Говорите дальше";
+
+            if (!/android/i.test(navigator.userAgent)) {
+              startLiveSpeechRecognition();
+            }
+          }
+        }, 250);
       });
     } else {
       liveIsThinking = false;

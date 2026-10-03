@@ -614,11 +614,30 @@ async def api_gemini_cascade_chat(req: LiveChatRequest):
         "Помогай пользователю развить идею и довести её до четкой технической задачи."
     )
 
-    contents = []
-    for h in req.history[-6:]:  # Keep recent context
+    # Strictly alternate user and model roles to comply with Google Gemini API
+    sanitized_contents = []
+    last_role = None
+    for h in (req.history or [])[-8:]:
         role = "user" if h.get("role") == "user" else "model"
-        contents.append({"role": role, "parts": [{"text": h.get("text", "")}]})
-    contents.append({"role": "user", "parts": [{"text": req.message}]})
+        text = (h.get("text") or "").strip()
+        if not text:
+            continue
+        if role == last_role:
+            sanitized_contents[-1]["parts"][0]["text"] += f"\n{text}"
+        else:
+            sanitized_contents.append({"role": role, "parts": [{"text": text}]})
+            last_role = role
+
+    user_msg = (req.message or "").strip()
+    if not user_msg:
+        user_msg = "Привет"
+
+    if last_role == "user":
+        sanitized_contents[-1]["parts"][0]["text"] += f"\n{user_msg}"
+    else:
+        sanitized_contents.append({"role": "user", "parts": [{"text": user_msg}]})
+
+    contents = sanitized_contents
 
     now = time.time()
     last_error = None
