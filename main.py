@@ -522,15 +522,10 @@ import time
 
 CASCADE_MODELS = [
     "gemini-3.1-flash-lite",
-    "gemini-3.1-flash-lite-preview",
     "gemini-flash-lite-latest",
-    "gemini-3.5-flash-lite",
     "gemini-3.5-flash",
-    "gemini-3.6-flash",
-    "gemini-3.7-flash",
-    "gemini-3.8-flash",
-    "gemini-2.5-flash",
-    "gemini-2.5-pro"
+    "gemini-3-flash-preview",
+    "gemini-3.1-flash-lite-preview"
 ]
 
 model_quota_status = {}  # {model_name: blocked_until_timestamp}
@@ -685,6 +680,75 @@ async def api_gemini_cascade_chat(req: LiveChatRequest):
         "voice": req.voice or "ru-RU-DmitryNeural",
         "error": last_error
     }
+
+@app.post("/api/voice-transcribe")
+async def api_voice_transcribe(
+    file: UploadFile = File(...),
+    gemini_key: Optional[str] = Form(None)
+):
+    """Transcribes user speech audio directly via Gemini 3.1 Flash-Lite / 3.5 Flash."""
+    import httpx
+    import base64
+
+    api_key = gemini_key or os.getenv("GEMINI_API_KEY", "")
+    if not api_key:
+        raise HTTPException(status_code=400, detail="Gemini API Key required")
+
+    audio_bytes = await file.read()
+    if not audio_bytes or len(audio_bytes) < 100:
+        return {"success": False, "text": "NONE", "detail": "Audio too short"}
+
+    raw_mime = file.content_type or "audio/webm"
+    if "webm" in raw_mime:
+        mime_type = "audio/webm"
+    elif "mp4" in raw_mime:
+        mime_type = "audio/mp4"
+    elif "wav" in raw_mime:
+        mime_type = "audio/wav"
+    elif "mp3" in raw_mime or "mpeg" in raw_mime:
+        mime_type = "audio/mp3"
+    elif "ogg" in raw_mime:
+        mime_type = "audio/ogg"
+    else:
+        mime_type = "audio/webm"
+
+    b64_data = base64.b64encode(audio_bytes).decode("utf-8")
+
+    payload = {
+        "contents": [
+            {
+                "parts": [
+                    {
+                        "inlineData": {
+                            "mimeType": mime_type,
+                            "data": b64_data
+                        }
+                    },
+                    {
+                        "text": "Транскрибируй то, что сказано в этой аудиозаписи на русском языке. "
+                                "Выведи ТОЛЬКО распознанный текст без лишних слов, без кавычек и пояснений. "
+                                "Если не слышно членораздельной речи, звучит только шум, покашливание или тишина, выведи ровно одно слово: NONE"
+                    }
+                ]
+            }
+        ]
+    }
+
+    async with httpx.AsyncClient(timeout=15.0, verify=False) as client:
+        for model_name in CASCADE_MODELS:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
+            try:
+                r = await client.post(url, json=payload)
+                if r.status_code == 200:
+                    data = r.json()
+                    candidates = data.get("candidates", [])
+                    if candidates and "content" in candidates[0]:
+                        text = candidates[0]["content"]["parts"][0]["text"].strip()
+                        return {"success": True, "text": text, "model": model_name}
+            except Exception as e:
+                logger.warning(f"Voice transcribe error with {model_name}: {e}")
+
+    return {"success": False, "text": "NONE", "error": "All transcribe models failed"}
 
 @app.post("/api/gemini/summarize-task")
 def api_gemini_summarize_task(req: SummarizeTaskRequest):

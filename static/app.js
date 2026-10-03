@@ -1401,14 +1401,15 @@ function startVolumeVisualizer() {
     }
 
     // Voice Activity Detection (VAD)
-    if (normalized > 14 && liveIsListening && !liveIsThinking && !(window.speechSynthesis && window.speechSynthesis.speaking)) {
+    const isAudioPlaying = liveAudioPlayer && !liveAudioPlayer.paused;
+    if (normalized > 14 && liveIsListening && !liveIsThinking && !isAudioPlaying) {
       liveUserSpokeSound = true;
 
-      // Reset speech silence timer
+      // Reset speech silence timer (1.4s of silence after speech)
       if (liveSilenceTimer) clearTimeout(liveSilenceTimer);
       liveSilenceTimer = setTimeout(() => {
         handleSilenceTimeout();
-      }, 1800);
+      }, 1400);
     }
   }
 
@@ -1434,19 +1435,26 @@ function startLiveMediaRecorder() {
     liveMediaRecorder.ondataavailable = (e) => {
       if (e.data && e.data.size > 0) {
         liveAudioChunks.push(e.data);
-        if (liveAudioChunks.length > 50) {
+        if (liveAudioChunks.length > 60) {
           liveAudioChunks.shift();
         }
       }
     };
-    liveMediaRecorder.start(250);
+    liveMediaRecorder.start(200);
   } catch (e) {
     console.warn("Live MediaRecorder start failed:", e);
   }
 }
 
-// 3. Web Speech Recognition Loop
+// 3. Web Speech Recognition Loop (Disabled on Android to eliminate system chimes)
 function startLiveSpeechRecognition() {
+  const isAndroid = /android/i.test(navigator.userAgent);
+  if (isAndroid) {
+    // Avoid Android system chime sound ('тулюлюн') on repeated SpeechRecognition starts.
+    // Pure Hardware VAD + Gemini Transcribe handles Android seamlessly and quietly.
+    return;
+  }
+
   const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SpeechRec) {
     console.log("WebSpeech not available, running hardware VAD + Gemini Transcribe");
@@ -1493,7 +1501,7 @@ function startLiveSpeechRecognition() {
         if (liveSilenceTimer) clearTimeout(liveSilenceTimer);
         liveSilenceTimer = setTimeout(() => {
           handleSilenceTimeout();
-        }, 1600);
+        }, 1400);
       }
     };
 
@@ -1506,15 +1514,17 @@ function startLiveSpeechRecognition() {
     };
 
     liveSpeechRecognizer.onend = () => {
+      const isPlaying = liveAudioPlayer && !liveAudioPlayer.paused;
       const modal = document.getElementById("modalGeminiLive");
-      if (modal && modal.classList.contains("active") && liveIsListening && !liveIsThinking && !(window.speechSynthesis && window.speechSynthesis.speaking)) {
+      if (modal && modal.classList.contains("active") && liveIsListening && !liveIsThinking && !isPlaying) {
         clearTimeout(liveRestartTimeout);
         liveRestartTimeout = setTimeout(() => {
+          const playingNow = liveAudioPlayer && !liveAudioPlayer.paused;
           const m = document.getElementById("modalGeminiLive");
-          if (m && m.classList.contains("active") && liveIsListening && !liveIsThinking) {
+          if (m && m.classList.contains("active") && liveIsListening && !liveIsThinking && !playingNow) {
             try { liveSpeechRecognizer.start(); } catch(err) {}
           }
-        }, 300);
+        }, 800);
       }
     };
 
@@ -1527,6 +1537,9 @@ function startLiveSpeechRecognition() {
 // 4. Silence Timeout Handler (Dual-Engine: WebSpeech or Gemini Transcribe)
 async function handleSilenceTimeout() {
   if (liveIsThinking || !liveUserSpokeSound) return;
+  const isAudioPlaying = liveAudioPlayer && !liveAudioPlayer.paused;
+  if (isAudioPlaying) return;
+
   liveUserSpokeSound = false;
 
   const captured = liveCurrentSpeechText.trim();
@@ -1536,16 +1549,17 @@ async function handleSilenceTimeout() {
     return;
   }
 
-  // Fallback: If WebSpeech produced no text, check recorded hardware audio
+  // Dual-Engine: Transcribe recorded hardware audio with Gemini AI
   if (liveMediaRecorder && liveAudioChunks.length > 0) {
     const status = document.getElementById("liveStatusText");
-    if (status) status.innerText = "⏳ Распознаю аудио через Gemini AI...";
+    if (status) status.innerText = "⏳ Распознаю речь через Gemini...";
 
     const mime = liveMediaRecorder.mimeType || "audio/webm";
     const blob = new Blob(liveAudioChunks, { type: mime });
     liveAudioChunks = [];
 
-    if (blob.size > 800) {
+    if (blob.size > 400) {
+      liveIsThinking = true;
       try {
         const formData = new FormData();
         formData.append("file", blob, "live_mic.webm");
@@ -1555,19 +1569,22 @@ async function handleSilenceTimeout() {
         });
         if (resp.ok) {
           const data = await resp.json();
-          if (data.success && data.text && data.text !== "NONE" && data.text.length > 1) {
-            handleUserLiveUtterance(data.text);
+          if (data.success && data.text && data.text !== "NONE" && data.text.trim().length > 1) {
+            handleUserLiveUtterance(data.text.trim());
             return;
           }
         }
       } catch (err) {
-        console.warn("Gemini transcribe fallback error:", err);
+        console.warn("Gemini transcribe error:", err);
       }
+      liveIsThinking = false;
     }
   }
 
   const status = document.getElementById("liveStatusText");
-  if (status && !liveIsThinking) status.innerText = "🟢 Слушаю вас... Говорите";
+  if (status && !liveIsThinking && !(liveAudioPlayer && !liveAudioPlayer.paused)) {
+    status.innerText = "🟢 Слушаю вас... Говорите";
+  }
 }
 
 // 5. Open / Close Live Session
@@ -1781,6 +1798,9 @@ async function speakNaturalReply(text, audioBase64, onComplete) {
   }
   if (typeof window !== "undefined" && "speechSynthesis" in window) {
     window.speechSynthesis.cancel();
+  }
+  if (liveSpeechRecognizer) {
+    try { liveSpeechRecognizer.abort(); } catch(e) {}
   }
 
   const orb = document.getElementById("liveOrb");
