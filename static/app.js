@@ -47,7 +47,7 @@ const newProjTaskInput = document.getElementById("newProjTaskInput");
 const modalFileViewer = document.getElementById("modalFileViewer");
 const btnCloseFileViewer = document.getElementById("btnCloseFileViewer");
 const fileViewerTitle = document.getElementById("fileViewerTitle");
-const fileViewerCode = document.getElementById("fileViewerCode");
+const fileViewerCode = document.getElementById("fileEditorArea") || document.getElementById("fileViewerCode");
 
 const modalTerminal = document.getElementById("modalTerminal");
 const btnOpenTerminal = document.getElementById("btnOpenTerminal");
@@ -202,19 +202,8 @@ function renderFilesList(files) {
 }
 
 async function openFileContent(projId, filePath) {
-  fileViewerTitle.innerText = `${filePath} (${projId})`;
-  fileViewerCode.innerText = "Загрузка...";
-  modalFileViewer.classList.add("active");
-
-  try {
-    const res = await fetch(`${SERVER_URL}/api/projects/${projId}/file?path=${encodeURIComponent(filePath)}`);
-    if (res.ok) {
-      const data = await res.json();
-      fileViewerCode.innerText = data.content || "// Файл пуст";
-      return;
-    }
-  } catch (e) {
-    fileViewerCode.innerText = "Ошибка чтения файла: " + e.message;
+  if (typeof openFileInEditor === "function") {
+    return openFileInEditor(filePath);
   }
 }
 
@@ -462,7 +451,6 @@ taskInput.addEventListener("input", function() {
 });
 
 // Tools (+) Popup Menu Toggle & Actions
-const btnAttach = document.getElementById("btnAttach");
 const toolsPopup = document.getElementById("toolsPopup");
 
 if (btnAttach && toolsPopup) {
