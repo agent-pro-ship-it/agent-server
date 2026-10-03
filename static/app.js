@@ -1367,7 +1367,7 @@ function openBrowserModal(rawUrl = null) {
     if (rawUrl) {
       navigateToBrowserUrl(rawUrl);
     } else if (!browserIframe || !browserIframe.src || browserIframe.src === "about:blank") {
-      navigateToBrowserUrl("https://accounts.google.com");
+      navigateToBrowserUrl("https://www.google.com");
     }
   }
 }
@@ -1380,6 +1380,10 @@ const browserScreenshotView = document.getElementById("browserScreenshotView");
 const browserScreenshotImg = document.getElementById("browserScreenshotImg");
 const browserAgentOverlay = document.getElementById("browserAgentOverlay");
 const browserAgentText = document.getElementById("browserAgentText");
+const btnBrowserBack = document.getElementById("btnBrowserBack");
+const btnBrowserForward = document.getElementById("btnBrowserForward");
+const btnBrowserReload = document.getElementById("btnBrowserReload");
+const btnBrowserExternal = document.getElementById("btnBrowserExternal");
 
 function openSecureAuthPopup(rawUrl = null) {
   const targetUrl = rawUrl || (browserUrlInput ? browserUrlInput.value : "") || "https://accounts.google.com";
@@ -1390,7 +1394,7 @@ function openSecureAuthPopup(rawUrl = null) {
   window.open(targetUrl, "AntigravitySecureAuth", `width=${w},height=${h},top=${top},left=${left},resizable=yes,scrollbars=yes`);
 }
 
-function navigateToBrowserUrl(rawUrl = null) {
+function navigateToBrowserUrl(rawUrl = null, useDirect = false) {
   let url = (rawUrl || (browserUrlInput ? browserUrlInput.value : "")).trim();
   if (!url) return;
   if (!url.startsWith("http://") && !url.startsWith("https://")) {
@@ -1401,16 +1405,30 @@ function navigateToBrowserUrl(rawUrl = null) {
   // Restore iframe view
   if (browserIframe) {
     browserIframe.style.display = "block";
-    browserIframe.src = url;
+    if (!useDirect) {
+      // Route through server proxy to bypass X-Frame-Options SAMEORIGIN / 403 blocks
+      browserIframe.src = `${SERVER_URL}/api/browser/proxy?url=${encodeURIComponent(url)}`;
+    } else {
+      browserIframe.src = url;
+    }
   }
   if (browserScreenshotView) browserScreenshotView.style.display = "none";
 
-  // Check if site requires popup auth due to X-Frame-Options (Google, GitHub, etc.)
+  // Check if site requires popup auth due to strict OAuth policies (Google Login, GitHub OAuth)
   const isAuthSite = url.includes("accounts.google") || url.includes("github.com/login") || url.includes("render.com") || url.includes("login");
   if (browserSecurityBanner) {
     browserSecurityBanner.style.display = isAuthSite ? "flex" : "none";
   }
 }
+
+// Listen for navigation messages from proxied pages
+window.addEventListener("message", (e) => {
+  if (e.data && e.data.type === "ANTIGRAVITY_BROWSER_NAVIGATED" && e.data.url) {
+    if (browserUrlInput) {
+      browserUrlInput.value = e.data.url;
+    }
+  }
+});
 
 async function loadAgentBrowserScreenshot(targetUrl = null) {
   const url = targetUrl || (browserUrlInput ? browserUrlInput.value : "");
@@ -1432,6 +1450,7 @@ async function loadAgentBrowserScreenshot(targetUrl = null) {
       browserScreenshotImg.src = "data:image/jpeg;base64," + data.screenshot_base64;
       browserScreenshotView.style.display = "flex";
       if (browserIframe) browserIframe.style.display = "none";
+      if (data.url && browserUrlInput) browserUrlInput.value = data.url;
     }
   } catch(e) {
     console.warn("Agent browser error:", e);
@@ -1451,23 +1470,39 @@ if (btnBrowserPopup) btnBrowserPopup.addEventListener("click", () => openSecureA
 if (btnBannerOpenAuth) btnBannerOpenAuth.addEventListener("click", () => openSecureAuthPopup());
 if (btnBrowserAgentView) btnBrowserAgentView.addEventListener("click", () => loadAgentBrowserScreenshot());
 
-if (browserUrlInput) {
-  browserUrlInput.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      navigateToBrowserUrl();
+if (btnBrowserBack) {
+  btnBrowserBack.addEventListener("click", () => {
+    try {
+      if (browserIframe && browserIframe.contentWindow) {
+        browserIframe.contentWindow.history.back();
+      }
+    } catch(e) {}
+  });
+}
+
+if (btnBrowserForward) {
+  btnBrowserForward.addEventListener("click", () => {
+    try {
+      if (browserIframe && browserIframe.contentWindow) {
+        browserIframe.contentWindow.history.forward();
+      }
+    } catch(e) {}
+  });
+}
+
+if (btnBrowserReload) {
+  btnBrowserReload.addEventListener("click", () => {
+    if (browserIframe && browserIframe.src) {
+      const cur = browserIframe.src;
+      browserIframe.src = cur;
     }
   });
 }
+
 if (btnBrowserExternal) {
   btnBrowserExternal.addEventListener("click", () => {
-    const u = (browserUrlInput && browserUrlInput.value) || "https://accounts.google.com";
+    const u = (browserUrlInput && browserUrlInput.value) || "https://www.google.com";
     window.open(u, "_blank");
-  });
-}
-if (btnBrowserReload) {
-  btnBrowserReload.addEventListener("click", () => {
-    if (browserIframe && browserIframe.src) browserIframe.src = browserIframe.src;
   });
 }
 
@@ -1478,6 +1513,15 @@ document.querySelectorAll(".quick-link-chip").forEach(chip => {
     if (targetUrl) navigateToBrowserUrl(targetUrl);
   });
 });
+
+if (browserUrlInput) {
+  browserUrlInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      navigateToBrowserUrl();
+    }
+  });
+}
 
 
 // 7. Files Drawer & Modals Handlers

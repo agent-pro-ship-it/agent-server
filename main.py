@@ -866,6 +866,109 @@ async def api_browser_navigate(req: BrowserNavigateRequest):
         except Exception as e2:
             return {"success": False, "error": f"Browser error: {e} / {e2}"}
 
+@app.get("/api/browser/proxy")
+async def api_browser_proxy(url: str):
+    """Secure proxy for in-app browser modal: strips X-Frame-Options & CSP so sites can render inside iframe."""
+    target_url = url.strip()
+    if not target_url.startswith("http://") and not target_url.startswith("https://"):
+        target_url = "https://" + target_url
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
+    }
+
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True, verify=False) as client:
+            resp = await client.get(target_url, headers=headers)
+            content_type = resp.headers.get("content-type", "text/html")
+
+            # Non-HTML content (images, css, js, fonts)
+            if "text/html" not in content_type:
+                return Response(
+                    content=resp.content,
+                    status_code=resp.status_code,
+                    media_type=content_type,
+                    headers={"Access-Control-Allow-Origin": "*"}
+                )
+
+            html_text = resp.text
+            final_url = str(resp.url)
+
+            # Injected script: keep links within proxy, notify parent window of navigation
+            injected_head = (
+                f'<base href="{final_url}">\n'
+                '<script>\n'
+                'try {\n'
+                '  if (window.parent && window.parent !== window) {\n'
+                f'    window.parent.postMessage({{ type: "ANTIGRAVITY_BROWSER_NAVIGATED", url: "{final_url}" }}, "*");\n'
+                '  }\n'
+                '} catch(e) {}\n'
+                'document.addEventListener("click", function(e) {\n'
+                '  var a = e.target.closest("a");\n'
+                '  if (a && a.href && !a.href.startsWith("javascript:") && !a.href.startsWith("#")) {\n'
+                '    e.preventDefault();\n'
+                '    window.location.href = "/api/browser/proxy?url=" + encodeURIComponent(a.href);\n'
+                '  }\n'
+                '}, true);\n'
+                'document.addEventListener("submit", function(e) {\n'
+                '  var form = e.target;\n'
+                '  if (form && form.action) {\n'
+                '    var method = (form.method || "GET").toUpperCase();\n'
+                '    if (method === "GET") {\n'
+                '      e.preventDefault();\n'
+                '      var formData = new FormData(form);\n'
+                '      var params = new URLSearchParams(formData).toString();\n'
+                '      var targetAction = form.action;\n'
+                '      var sep = targetAction.indexOf("?") !== -1 ? "&" : "?";\n'
+                '      window.location.href = "/api/browser/proxy?url=" + encodeURIComponent(targetAction + sep + params);\n'
+                '    }\n'
+                '  }\n'
+                '}, true);\n'
+                '</script>\n'
+            )
+
+            # Inject into <head> or prepend
+            import re
+            if re.search(r'<head[^>]*>', html_text, re.IGNORECASE):
+                html_text = re.sub(r'(<head[^>]*>)', r'\1\n' + injected_head, html_text, count=1, flags=re.IGNORECASE)
+            else:
+                html_text = injected_head + html_text
+
+            return HTMLResponse(
+                content=html_text,
+                status_code=resp.status_code,
+                headers={
+                    "Access-Control-Allow-Origin": "*",
+                    "X-Robots-Tag": "noindex, nofollow"
+                }
+            )
+    except Exception as e:
+        logger.error(f"Browser proxy error for {target_url}: {e}")
+        error_html = (
+            '<!DOCTYPE html><html><head><meta charset="utf-8">'
+            '<title>Ошибка загрузки страницы</title>'
+            '<style>'
+            'body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; background: #0f172a; color: #f8fafc; }'
+            '.err-box { background: #1e293b; padding: 32px; border-radius: 12px; border: 1px solid #334155; max-width: 500px; text-align: center; box-shadow: 0 10px 25px rgba(0,0,0,0.5); }'
+            'h2 { margin-top: 0; color: #ef4444; font-size: 20px; }'
+            'p { color: #94a3b8; font-size: 14px; line-height: 1.5; }'
+            '.btn-row { display: flex; gap: 12px; justify-content: center; margin-top: 20px; }'
+            'a.btn, button.btn { background: #2563eb; color: #fff; text-decoration: none; padding: 8px 16px; border-radius: 6px; font-weight: 500; font-size: 13px; border: none; cursor: pointer; }'
+            'a.btn-sec { background: #334155; }'
+            '</style></head>'
+            '<body><div class="err-box">'
+            f'<h2>Не удалось загрузить страницу</h2>'
+            f'<p>Адрес: <b>{target_url}</b><br>Причина: {str(e)}</p>'
+            '<div class="btn-row">'
+            '<button class="btn" onclick="location.reload()">↻ Повторить</button>'
+            f'<a class="btn btn-sec" href="{target_url}" target="_blank">Открыть во вкладке ↗</a>'
+            '</div></div></body></html>'
+        )
+        return HTMLResponse(content=error_html, status_code=502)
+
 async def synthesize_speech_for_reply(text: str, voice: str = "ru-RU-DmitryNeural") -> Optional[str]:
     if not text:
         return None
