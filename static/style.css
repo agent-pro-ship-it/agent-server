@@ -807,6 +807,11 @@ pre code {
   background: #b91c1c;
 }
 
+.btn-circle-mic.live-active {
+  background: #10b981;
+  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.4);
+}
+
 @keyframes mic-pulse {
   from { transform: scale(1); box-shadow: 0 0 0 0 var(--mic-red-pulse); }
   to { transform: scale(1.12); box-shadow: 0 0 0 10px var(--mic-red-pulse); }
@@ -1898,6 +1903,11 @@ body.light-theme .task-textarea {
 .btn-live-sparkle:hover {
   transform: translateY(-1px);
   box-shadow: 0 4px 16px rgba(124, 58, 237, 0.55);
+}
+.btn-live-sparkle.active {
+  background: linear-gradient(135deg, #059669 0%, #10b981 100%);
+  border-color: rgba(255, 255, 255, 0.5);
+  box-shadow: 0 0 14px rgba(16, 185, 129, 0.6);
 }
 
 .live-dot-pulse {

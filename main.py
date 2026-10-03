@@ -1,6 +1,7 @@
 import os
 import sys
 import subprocess
+import asyncio
 import json
 import logging
 import psutil
@@ -72,6 +73,9 @@ class TaskRequest(BaseModel):
     task: str
     gemini_key: Optional[str] = None
     project_id: Optional[str] = None
+    voice_mode: Optional[bool] = False
+    voice: Optional[str] = "ru-RU-DmitryNeural"
+    history: Optional[List[Dict[str, Any]]] = None
 
 class CommandRequest(BaseModel):
     command: str
@@ -856,11 +860,28 @@ def execute_command(req: CommandRequest):
     except Exception as e:
         return {"exit_code": 1, "stdout": "", "stderr": str(e)}
 
+async def synthesize_speech_for_reply(text: str, voice: str = "ru-RU-DmitryNeural") -> Optional[str]:
+    if not text:
+        return None
+    try:
+        import re
+        clean = re.sub(r'[*`#_\[\]\(\)>~]', ' ', text)
+        clean = re.sub(r'https?://\S+', '', clean)
+        clean = re.sub(r'\s+', ' ', clean).strip()
+        if len(clean) > 400:
+            clean = clean[:380].rsplit(' ', 1)[0] + "..."
+        if clean:
+            return await synthesize_edge_studio_voice(clean, voice=voice)
+    except Exception as e:
+        logger.warning(f"Voice synthesis for reply error: {e}")
+    return None
+
 @app.post("/api/task")
-def run_autonomous_task(req: TaskRequest):
+async def run_autonomous_task(req: TaskRequest):
     """
     Autonomous AI developer engine:
     Receives user goal, plans actions, writes files, executes code, saves to Storj S3.
+    Supports voice_mode with concise conversational style and Dmitry Studio Neural voice.
     """
     task = req.task.strip()
     api_key = req.gemini_key or os.getenv("GEMINI_API_KEY")
@@ -877,12 +898,26 @@ def run_autonomous_task(req: TaskRequest):
 
     ensure_antigravity_auth()
 
+    # Formulate conversational prompt if in voice mode or with dialogue history
+    task_prompt = task
+    if req.voice_mode:
+        task_prompt = (
+            f"[Внимание: режим живого голосового диалога Antigravity. Отвечай кратко, емко (1-3 предложениями), живо и строго по делу для приятной беседы. "
+            f"Если пользователь просит написать код, создать/отредактировать файл или запустить процесс — делай это сразу инструментами, но в тексте дай краткое живое резюме]:\n{task}"
+        )
+    if req.history and len(req.history) > 0:
+        recent = [f"{h.get('role','user')}: {h.get('text','')}" for h in req.history[-6:] if h.get('text')]
+        if recent:
+            task_prompt = "Контекст недавнего диалога в проекте:\n" + "\n".join(recent) + f"\n\n{task_prompt}"
+
     # Priority 1: Official Google Antigravity CLI Engine with Google Pro
     if ANTIGRAVITY_TOKEN_FILE.exists():
         try:
             logger.info(f"Executing task via official Google Antigravity CLI (Google Pro) in {target_dir}...")
-            res = subprocess.run(
-                ["agy", "--dangerously-skip-permissions", "-p", task],
+            cmd = ["agy", "--dangerously-skip-permissions", "-c", "-p", task_prompt]
+            res = await asyncio.to_thread(
+                subprocess.run,
+                cmd,
                 cwd=str(target_dir),
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
@@ -890,6 +925,19 @@ def run_autonomous_task(req: TaskRequest):
                 text=True,
                 timeout=60
             )
+            if res.returncode != 0 and "no previous conversation" in (res.stderr or "").lower():
+                cmd = ["agy", "--dangerously-skip-permissions", "-p", task_prompt]
+                res = await asyncio.to_thread(
+                    subprocess.run,
+                    cmd,
+                    cwd=str(target_dir),
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    timeout=60
+                )
+
             synced_to_cloud = []
             if s3_client:
                 for root, _, files in os.walk(str(target_dir)):
@@ -904,10 +952,17 @@ def run_autonomous_task(req: TaskRequest):
                             pass
 
             output_text = res.stdout if res.stdout else res.stderr
+            explanation_str = output_text.strip() if output_text else "Задача успешно выполнена агентом Antigravity."
+
+            voice_audio = None
+            if req.voice_mode:
+                voice_audio = await synthesize_speech_for_reply(explanation_str, req.voice or "ru-RU-DmitryNeural")
+
             return {
                 "success": (res.returncode == 0),
                 "engine": "Google Antigravity CLI (Google Pro)",
-                "explanation": output_text.strip() if output_text else "Задача успешно выполнена агентом Antigravity.",
+                "explanation": explanation_str,
+                "voice_audio_base64": voice_audio,
                 "stdout": "",
                 "terminal_log": (res.stdout or "") + ("\n" + res.stderr if res.stderr else ""),
                 "stderr": res.stderr,
@@ -1012,10 +1067,14 @@ Return ONLY valid JSON.
 
             expl = data.get("explanation") or "Задача выполнена."
             cmd_stdout = res.stdout if (res.stdout and res.stdout.strip() != expl.strip()) else ""
+            voice_audio = None
+            if req.voice_mode:
+                voice_audio = await synthesize_speech_for_reply(expl, req.voice or "ru-RU-DmitryNeural")
             return {
                 "success": (res.returncode == 0),
                 "engine": "Gemini 3.1 Autonomous Engine",
                 "explanation": expl,
+                "voice_audio_base64": voice_audio,
                 "stdout": cmd_stdout,
                 "terminal_log": (res.stdout or "") + ("\n" + res.stderr if res.stderr else ""),
                 "stderr": res.stderr,

@@ -335,13 +335,15 @@ window.copyText = function(btn) {
 };
 
 // 5. Send Task to Antigravity Engine
-async function sendTask() {
-  const text = taskInput.value.trim();
+async function sendTask(customText = null, isVoice = false) {
+  const text = (customText !== null ? customText : taskInput.value).trim();
   if (!text) return;
 
   appendUserMessage(text);
-  taskInput.value = "";
-  taskInput.style.height = "auto";
+  if (customText === null) {
+    taskInput.value = "";
+    taskInput.style.height = "auto";
+  }
 
   // Live Antigravity Process Card with Animated Steps
   const loadingBubble = appendAssistantMessage(`
@@ -371,12 +373,20 @@ async function sendTask() {
   `, false);
 
   try {
+    const historyList = (activeProject && conversations[activeProject.id]) ?
+      conversations[activeProject.id].slice(-6).map(m => ({
+        role: m.role,
+        text: m.text || (m.html ? m.html.replace(/<[^>]*>/g, '').trim() : '')
+      })) : [];
+
     const res = await fetch(`${SERVER_URL}/api/task`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         task: text,
-        project_id: activeProject ? activeProject.id : null
+        project_id: activeProject ? activeProject.id : null,
+        voice_mode: isVoice || isContinuousLiveVoiceActive,
+        history: historyList
       })
     });
 
@@ -390,7 +400,6 @@ async function sendTask() {
 
     const explanationText = data.explanation || "Задача выполнена.";
     const terminalOutput = (data.terminal_log || data.stdout || "").trim();
-    // Only display terminal accordion if there's real command output different from explanation
     const hasTerminalOutput = terminalOutput.length > 0 && terminalOutput !== explanationText.trim();
 
     const processAccordion = `
@@ -428,9 +437,13 @@ async function sendTask() {
     </details>
     `;
 
-    // Render clean process accordion + formatted explanation without duplication
     appendAssistantMessage(processAccordion + formatMarkdown(explanationText));
     if (activeProject) loadProjectFiles(activeProject.id);
+
+    // If voice reply was returned, play it directly
+    if (data.voice_audio_base64) {
+      playBotVoiceAudio(data.voice_audio_base64);
+    }
 
   } catch (err) {
     loadingBubble.innerHTML = "❌ Ошибка соединения с сервером. Попробуйте еще раз.";
@@ -501,146 +514,194 @@ if (crumbProject) {
   });
 }
 
-// 6. Rock-Solid Dual Voice Capture (Hardware getUserMedia + Web Speech API + Gemini AI Server Transcribe)
+// 6. Seamless In-Chat Voice Module with Open-Source Silero VAD (WebAssembly)
+let currentBotAudio = null;
+let sileroVadInstance = null;
+let isContinuousLiveVoiceActive = false;
 let mediaStream = null;
 let speechRecognizer = null;
 
-async function startListening() {
-  isRecording = true;
-  btnMic.classList.add("recording");
-  voiceStatusBar.style.display = "flex";
-  voiceStatusText.innerText = "🔴 Запись... Говорите задачу (нажмите еще раз для завершения)";
-  audioChunks = [];
+function stopBotVoiceAudio() {
+  if (currentBotAudio) {
+    try {
+      currentBotAudio.pause();
+      currentBotAudio.currentTime = 0;
+    } catch(e) {}
+    currentBotAudio = null;
+  }
+}
 
-  // Request audio hardware stream directly inside user gesture
+function playBotVoiceAudio(base64Mp3) {
+  stopBotVoiceAudio();
   try {
-    mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    
-    let options = {};
-    if (typeof MediaRecorder !== "undefined") {
-      if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
-        options = { mimeType: 'audio/webm;codecs=opus' };
-      } else if (MediaRecorder.isTypeSupported('audio/webm')) {
-        options = { mimeType: 'audio/webm' };
-      } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
-        options = { mimeType: 'audio/mp4' };
+    currentBotAudio = new Audio("data:audio/mp3;base64," + base64Mp3);
+    currentBotAudio.onended = () => {
+      currentBotAudio = null;
+      if (isContinuousLiveVoiceActive) {
+        updateVoiceStatusUI("🎙 Слушаю вас... (Silero VAD)");
       }
-      mediaRecorder = new MediaRecorder(mediaStream, options);
-      mediaRecorder.ondataavailable = (e) => {
-        if (e.data && e.data.size > 0) audioChunks.push(e.data);
-      };
-      mediaRecorder.start(200);
-    }
+    };
+    currentBotAudio.play().catch(err => {
+      console.warn("Audio play prevented:", err);
+    });
+    updateVoiceStatusUI("🔊 Antigravity говорит (Dmitry Studio)...");
   } catch (err) {
-    console.warn("Microphone access denied or error:", err);
-    isRecording = false;
-    btnMic.classList.remove("recording");
-    voiceStatusBar.style.display = "none";
-    alert("Доступ к микрофону заблокирован в браузере.\nПожалуйста, нажмите на значок настроек/замочка слева в адресной строке и включите «Микрофон».");
-    return;
+    console.warn("Could not play voice audio:", err);
+  }
+}
+
+function updateVoiceStatusUI(text, isRec = false) {
+  if (voiceStatusText) voiceStatusText.innerText = text;
+  if (voiceStatusBar) voiceStatusBar.style.display = isContinuousLiveVoiceActive ? "flex" : "none";
+  if (btnMic) {
+    if (isRec) btnMic.classList.add("recording");
+    else btnMic.classList.remove("recording");
+  }
+}
+
+async function toggleLiveVoiceMode() {
+  if (isContinuousLiveVoiceActive) {
+    stopLiveVoiceMode();
+  } else {
+    await startLiveVoiceMode();
+  }
+}
+
+async function startLiveVoiceMode() {
+  stopBotVoiceAudio();
+  isContinuousLiveVoiceActive = true;
+  
+  if (btnOpenGeminiLive) {
+    btnOpenGeminiLive.classList.add("active");
+    btnOpenGeminiLive.title = "Выключить живой голосовой диалог";
+  }
+  if (btnMic) {
+    btnMic.classList.add("live-active");
+  }
+  updateVoiceStatusUI("⏳ Подключение Silero VAD нейросети...");
+
+  // 1. Try Official Open-Source Silero VAD (WebAssembly)
+  if (window.vad && typeof window.vad.MicVAD === "function") {
+    try {
+      sileroVadInstance = await window.vad.MicVAD.new({
+        onSpeechStart: () => {
+          // BARGE-IN: User started talking -> immediately stop bot speech
+          stopBotVoiceAudio();
+          updateVoiceStatusUI("🎙 Слышу ваш голос...", true);
+        },
+        onSpeechEnd: async (audioFloat32) => {
+          updateVoiceStatusUI("⏳ Распознавание речи...", false);
+          try {
+            const wavBlob = window.vad.utils.encodeWAV(audioFloat32);
+            if (wavBlob && wavBlob.size > 800) {
+              const formData = new FormData();
+              formData.append("file", wavBlob, "speech.wav");
+              const resp = await fetch(`${SERVER_URL}/api/voice-transcribe`, {
+                method: "POST",
+                body: formData
+              });
+              if (resp.ok) {
+                const resJson = await resp.json();
+                const text = (resJson.text || "").trim();
+                if (text && text !== "NONE") {
+                  updateVoiceStatusUI("💭 Antigravity думает...", false);
+                  await sendTask(text, true);
+                  return;
+                }
+              }
+            }
+          } catch (e) {
+            console.warn("Silero VAD speech process error:", e);
+          }
+          if (isContinuousLiveVoiceActive) {
+            updateVoiceStatusUI("🎙 Слушаю вас... (Silero VAD)");
+          }
+        },
+        onVADMisfire: () => {
+          if (isContinuousLiveVoiceActive) {
+            updateVoiceStatusUI("🎙 Слушаю вас... (Silero VAD)", false);
+          }
+        }
+      });
+      await sileroVadInstance.start();
+      updateVoiceStatusUI("🎙 Живой диалог активен (Silero VAD) • Говорите");
+      return;
+    } catch (vadErr) {
+      console.warn("Silero VAD initiation error, falling back to Web Speech:", vadErr);
+    }
   }
 
-  // Parallel Web Speech API for real-time live preview typing
+  // 2. Fallback to Web Speech API / MediaRecorder if VAD WASM not loaded
+  startWebSpeechFallback();
+}
+
+function startWebSpeechFallback() {
+  updateVoiceStatusUI("🎙 Говорите задачу...");
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (SpeechRecognition) {
     try {
       speechRecognizer = new SpeechRecognition();
       speechRecognizer.lang = "ru-RU";
       speechRecognizer.continuous = true;
-      speechRecognizer.interimResults = true;
+      speechRecognizer.interimResults = false;
 
-      speechRecognizer.onresult = (event) => {
-        let interim = "";
-        let final = "";
-        for (let i = 0; i < event.results.length; ++i) {
-          if (event.results[i].isFinal) final += event.results[i][0].transcript + " ";
-          else interim += event.results[i][0].transcript;
+      speechRecognizer.onresult = async (event) => {
+        let transcript = "";
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          if (event.results[i].isFinal) transcript += event.results[i][0].transcript + " ";
         }
-        const text = (final + interim).trim();
-        if (text) {
-          taskInput.value = text;
-          taskInput.style.height = "auto";
-          taskInput.style.height = (taskInput.scrollHeight) + "px";
-          voiceStatusText.innerText = "🎙 " + text;
+        transcript = transcript.trim();
+        if (transcript) {
+          updateVoiceStatusUI("💭 Antigravity думает...", false);
+          await sendTask(transcript, true);
         }
       };
 
-      speechRecognizer.onerror = (e) => {
-        console.warn("SpeechRecognition preview error (MediaRecorder still active):", e.error);
+      speechRecognizer.onend = () => {
+        if (isContinuousLiveVoiceActive) {
+          try { speechRecognizer.start(); } catch(e) {}
+        }
       };
 
       speechRecognizer.start();
-    } catch (e) {
-      console.warn("SpeechRecognition start exception:", e);
+    } catch(e) {
+      console.warn("Web Speech fallback error:", e);
     }
   }
 }
 
-async function stopListening() {
-  isRecording = false;
-  btnMic.classList.remove("recording");
-  voiceStatusText.innerText = "⏳ Распознавание речи...";
+function stopLiveVoiceMode() {
+  isContinuousLiveVoiceActive = false;
+  stopBotVoiceAudio();
 
+  if (sileroVadInstance) {
+    try { sileroVadInstance.pause(); } catch(e) {}
+  }
   if (speechRecognizer) {
     try { speechRecognizer.stop(); } catch(e) {}
     speechRecognizer = null;
   }
-
-  if (mediaRecorder && mediaRecorder.state !== "inactive") {
-    mediaRecorder.stop();
-  }
   if (mediaStream) {
-    mediaStream.getTracks().forEach(track => track.stop());
+    try { mediaStream.getTracks().forEach(t => t.stop()); } catch(e) {}
     mediaStream = null;
   }
 
-  await new Promise(r => setTimeout(r, 400));
-
-  // If live recognition already filled taskInput, we are done
-  if (taskInput.value.trim().length > 0) {
+  if (btnOpenGeminiLive) {
+    btnOpenGeminiLive.classList.remove("active");
+    btnOpenGeminiLive.title = "Включить живой голосовой диалог";
+  }
+  if (btnMic) {
+    btnMic.classList.remove("recording");
+    btnMic.classList.remove("live-active");
+  }
+  if (voiceStatusBar) {
     voiceStatusBar.style.display = "none";
-    taskInput.focus();
-    return;
   }
-
-  // Otherwise fallback to cloud transcription via Gemini AI
-  if (audioChunks.length > 0) {
-    const mime = (mediaRecorder && mediaRecorder.mimeType) || "audio/webm";
-    const audioBlob = new Blob(audioChunks, { type: mime });
-
-    if (audioBlob.size > 500) {
-      try {
-        const formData = new FormData();
-        formData.append("file", audioBlob, "voice.webm");
-        const resp = await fetch(`${SERVER_URL}/api/voice-transcribe`, {
-          method: "POST",
-          body: formData
-        });
-        if (resp.ok) {
-          const resJson = await resp.json();
-          if (resJson.success && resJson.text && resJson.text !== "NONE") {
-            taskInput.value = resJson.text;
-            taskInput.style.height = "auto";
-            taskInput.style.height = (taskInput.scrollHeight) + "px";
-            taskInput.focus();
-          }
-        }
-      } catch (err) {
-        console.warn("Cloud transcribe error:", err);
-      }
-    }
-  }
-
-  voiceStatusBar.style.display = "none";
 }
 
 btnMic.addEventListener("click", (e) => {
   e.preventDefault();
-  if (isRecording) {
-    stopListening();
-  } else {
-    startListening();
-  }
+  toggleLiveVoiceMode();
 });
 
 
@@ -1735,18 +1796,13 @@ async function handleSilenceTimeout() {
   }
 }
 
-// 5. Open / Close Live Session
+// 5. Open / Close Live Session (Redirected to Unified In-Chat Live Voice)
 async function openGeminiLiveModal() {
-  initNaturalVoices();
-  const m = document.getElementById("modalGeminiLive");
-  if (m) m.classList.add("active");
-  await startLiveSession();
+  toggleLiveVoiceMode();
 }
 
 function closeGeminiLiveModal() {
-  stopLiveSession();
-  const m = document.getElementById("modalGeminiLive");
-  if (m) m.classList.remove("active");
+  stopLiveVoiceMode();
 }
 
 if (btnOpenGeminiLive) {
