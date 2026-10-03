@@ -20,8 +20,13 @@ const chatFeed = document.getElementById("chatFeed");
 const taskInput = document.getElementById("taskInput");
 const btnSend = document.getElementById("btnSend");
 const btnMic = document.getElementById("btnMic");
+const btnLiveChatToggle = document.getElementById("btnLiveChatToggle");
+const btnOpenGeminiLive = document.getElementById("btnOpenGeminiLive");
+const btnCloseGeminiLive = document.getElementById("btnCloseGeminiLive");
 const voiceStatusBar = document.getElementById("voiceStatusBar");
 const voiceStatusText = document.getElementById("voiceStatusText");
+const micLevelFill = document.getElementById("micLevelFill");
+const micDeviceSelect = document.getElementById("micDeviceSelect");
 const btnSelectModel = document.getElementById("btnSelectModel");
 const currentModelName = document.getElementById("currentModelName");
 const modelDropdown = document.getElementById("modelDropdown");
@@ -515,8 +520,7 @@ if (crumbProject) {
 }
 
 // 6. Robust Hardware Voice Engine with Live VU Level Meter & Multi-Mic Selection
-const micLevelFill = document.getElementById("micLevelFill");
-const micDeviceSelect = document.getElementById("micDeviceSelect");
+// (micLevelFill and micDeviceSelect declared at top of file)
 
 let currentBotAudio = null;
 let isContinuousLiveVoiceActive = false;
@@ -630,6 +634,9 @@ async function toggleLiveVoiceMode() {
 }
 
 async function startLiveVoiceMode() {
+  if (isDictating) {
+    await stopDictationMode();
+  }
   stopBotVoiceAudio();
   isContinuousLiveVoiceActive = true;
 
@@ -637,10 +644,11 @@ async function startLiveVoiceMode() {
     btnOpenGeminiLive.classList.add("active");
     btnOpenGeminiLive.title = "Выключить живой голосовой диалог";
   }
-  if (btnMic) {
-    btnMic.classList.add("live-active");
+  if (btnLiveChatToggle) {
+    btnLiveChatToggle.classList.add("active");
+    btnLiveChatToggle.title = "Выключить живой голосовой диалог";
   }
-  updateVoiceStatusUI("🔴 Подключение к микрофону ноутбука...");
+  updateVoiceStatusUI("🔴 Подключение к микрофону...");
 
   // 1. Request hardware microphone stream
   try {
@@ -891,22 +899,276 @@ function stopLiveVoiceMode() {
     btnOpenGeminiLive.classList.remove("active");
     btnOpenGeminiLive.title = "Включить живой голосовой диалог";
   }
-  if (btnMic) {
-    btnMic.classList.remove("recording");
-    btnMic.classList.remove("live-active");
+  if (btnLiveChatToggle) {
+    btnLiveChatToggle.classList.remove("active");
+    btnLiveChatToggle.title = "Живой голосовой диалог с Antigravity (Live-режим)";
   }
-  if (voiceStatusBar) {
-    voiceStatusBar.style.display = "none";
-  }
-  if (micLevelFill) {
-    micLevelFill.style.width = "0%";
+  if (!isDictating) {
+    if (btnMic) {
+      btnMic.classList.remove("recording");
+      btnMic.classList.remove("live-active");
+    }
+    if (voiceStatusBar) {
+      voiceStatusBar.style.display = "none";
+    }
+    if (micLevelFill) {
+      micLevelFill.style.width = "0%";
+    }
   }
 }
 
-btnMic.addEventListener("click", (e) => {
-  e.preventDefault();
-  toggleLiveVoiceMode();
-});
+// ========================================================
+// SINGLE-TURN VOICE DICTATION CONTROLLER (INTO CHAT INPUT)
+// ========================================================
+let isDictating = false;
+let dictationStream = null;
+let dictationAudioCtx = null;
+let dictationAnalyser = null;
+let dictationMicSource = null;
+let dictationVuAnimId = null;
+let dictationSpeechRec = null;
+let dictationMediaRec = null;
+let dictationChunks = [];
+let dictationBaseText = "";
+let dictationLastCaptured = "";
+
+async function toggleDictationMode() {
+  if (isContinuousLiveVoiceActive) {
+    stopLiveVoiceMode();
+  }
+  if (isDictating) {
+    await stopDictationMode();
+  } else {
+    await startDictationMode();
+  }
+}
+
+async function startDictationMode() {
+  if (isContinuousLiveVoiceActive) {
+    stopLiveVoiceMode();
+  }
+  stopBotVoiceAudio();
+  isDictating = true;
+
+  if (btnMic) {
+    btnMic.classList.add("recording");
+    btnMic.title = "Остановить запись и вставить текст";
+  }
+
+  // Pre-fill base text if user already typed something
+  dictationBaseText = (taskInput.value || "").trim();
+  if (dictationBaseText.length > 0) dictationBaseText += " ";
+  dictationLastCaptured = "";
+  dictationChunks = [];
+
+  updateVoiceStatusUI("🎙 Диктуйте текст... Говорите в микрофон", true);
+  if (voiceStatusBar) voiceStatusBar.style.display = "flex";
+
+  // 1. Hardware Microphone Stream
+  try {
+    const selectedDeviceId = (micDeviceSelect && micDeviceSelect.value) ? micDeviceSelect.value : null;
+    const constraints = {
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true
+    };
+    if (selectedDeviceId) constraints.deviceId = { exact: selectedDeviceId };
+
+    try {
+      dictationStream = await navigator.mediaDevices.getUserMedia({ audio: constraints });
+    } catch (e1) {
+      console.warn("Dictation constraints fallback to audio:true", e1);
+      dictationStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    }
+    await populateMicDevices();
+  } catch (err) {
+    console.error("Dictation getUserMedia failed:", err);
+    await stopDictationMode();
+    handleMicError(err);
+    return;
+  }
+
+  // 2. Hardware VU Meter for visual feedback
+  try {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!dictationAudioCtx || dictationAudioCtx.state === "closed") {
+      dictationAudioCtx = new AudioContextClass();
+    }
+    if (dictationAudioCtx.state === "suspended") {
+      await dictationAudioCtx.resume();
+    }
+    dictationAnalyser = dictationAudioCtx.createAnalyser();
+    dictationAnalyser.fftSize = 256;
+    dictationMicSource = dictationAudioCtx.createMediaStreamSource(dictationStream);
+    dictationMicSource.connect(dictationAnalyser);
+
+    function runDictationMeter() {
+      if (!isDictating || !dictationAnalyser) return;
+      const dataArr = new Uint8Array(dictationAnalyser.frequencyBinCount);
+      dictationAnalyser.getByteFrequencyData(dataArr);
+      let sum = 0;
+      for (let i = 0; i < dataArr.length; i++) sum += dataArr[i];
+      const avg = sum / dataArr.length;
+      const pct = Math.min(100, Math.round((avg / 110) * 100));
+      if (micLevelFill) {
+        micLevelFill.style.width = pct + "%";
+        micLevelFill.style.background = pct > 12 ? "#10b981" : "#9ca3af";
+      }
+      dictationVuAnimId = requestAnimationFrame(runDictationMeter);
+    }
+    runDictationMeter();
+  } catch (vuErr) {
+    console.warn("Dictation VU init error:", vuErr);
+  }
+
+  // 3. Web Speech Recognition for instant live transcription
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (SpeechRecognition) {
+    try {
+      dictationSpeechRec = new SpeechRecognition();
+      dictationSpeechRec.lang = "ru-RU";
+      dictationSpeechRec.continuous = true;
+      dictationSpeechRec.interimResults = true;
+
+      dictationSpeechRec.onresult = (evt) => {
+        let interim = "";
+        let final = "";
+        for (let i = 0; i < evt.results.length; i++) {
+          if (evt.results[i].isFinal) final += evt.results[i][0].transcript + " ";
+          else interim += evt.results[i][0].transcript;
+        }
+        const spoken = (final + interim).trim();
+        if (spoken) {
+          dictationLastCaptured = spoken;
+          taskInput.value = dictationBaseText + spoken;
+          taskInput.style.height = "auto";
+          taskInput.style.height = taskInput.scrollHeight + "px";
+          updateVoiceStatusUI("🎙 " + spoken, true);
+        }
+      };
+
+      dictationSpeechRec.onerror = (e) => {
+        console.warn("Dictation speechRec error:", e.error);
+      };
+
+      dictationSpeechRec.start();
+    } catch (recErr) {
+      console.warn("Dictation SpeechRec start error:", recErr);
+    }
+  }
+
+  // 4. MediaRecorder audio backup for Gemini cloud transcribe
+  try {
+    let opts = {};
+    if (typeof MediaRecorder !== "undefined") {
+      if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) opts = { mimeType: 'audio/webm;codecs=opus' };
+      else if (MediaRecorder.isTypeSupported('audio/webm')) opts = { mimeType: 'audio/webm' };
+      else if (MediaRecorder.isTypeSupported('audio/mp4')) opts = { mimeType: 'audio/mp4' };
+    }
+    dictationMediaRec = new MediaRecorder(dictationStream, opts);
+    dictationMediaRec.ondataavailable = (e) => {
+      if (e.data && e.data.size > 0) dictationChunks.push(e.data);
+    };
+    dictationMediaRec.start(250);
+  } catch (mErr) {
+    console.warn("Dictation MediaRecorder error:", mErr);
+  }
+}
+
+async function stopDictationMode() {
+  if (!isDictating) return;
+  isDictating = false;
+
+  if (btnMic) {
+    btnMic.classList.remove("recording");
+    btnMic.title = "Голосовой ввод (нажмите для диктовки)";
+  }
+
+  if (dictationVuAnimId) {
+    cancelAnimationFrame(dictationVuAnimId);
+    dictationVuAnimId = null;
+  }
+
+  if (dictationMicSource) {
+    try { dictationMicSource.disconnect(); } catch(e) {}
+    dictationMicSource = null;
+  }
+
+  if (dictationSpeechRec) {
+    try { dictationSpeechRec.stop(); } catch(e) {}
+    dictationSpeechRec = null;
+  }
+
+  const chunksToTranscribe = [...dictationChunks];
+  dictationChunks = [];
+
+  if (dictationMediaRec && dictationMediaRec.state !== "inactive") {
+    try { dictationMediaRec.stop(); } catch(e) {}
+  }
+
+  if (dictationStream) {
+    try { dictationStream.getTracks().forEach(t => t.stop()); } catch(e) {}
+    dictationStream = null;
+  }
+
+  if (micLevelFill) micLevelFill.style.width = "0%";
+
+  // If Web Speech API didn't produce text, fallback to Gemini Cloud Transcribe
+  if (!dictationLastCaptured && chunksToTranscribe.length > 0) {
+    updateVoiceStatusUI("⏳ Расшифровка голоса (Gemini)...", false);
+    const mime = (dictationMediaRec && dictationMediaRec.mimeType) || "audio/webm";
+    const audioBlob = new Blob(chunksToTranscribe, { type: mime });
+    if (audioBlob.size > 600) {
+      try {
+        const formData = new FormData();
+        formData.append("file", audioBlob, "dictation.webm");
+        const resp = await fetch(`${SERVER_URL}/api/voice-transcribe`, {
+          method: "POST",
+          body: formData
+        });
+        if (resp.ok) {
+          const resJson = await resp.json();
+          const cloudText = (resJson.text || "").trim();
+          if (cloudText && cloudText !== "NONE") {
+            taskInput.value = dictationBaseText + cloudText;
+            taskInput.style.height = "auto";
+            taskInput.style.height = taskInput.scrollHeight + "px";
+          }
+        }
+      } catch (err) {
+        console.warn("Cloud transcribe fallback error:", err);
+      }
+    }
+  }
+
+  if (!isContinuousLiveVoiceActive) {
+    if (voiceStatusBar) voiceStatusBar.style.display = "none";
+  }
+
+  taskInput.focus();
+}
+
+// Wire Voice and Live Buttons
+if (btnMic) {
+  btnMic.addEventListener("click", (e) => {
+    e.preventDefault();
+    toggleDictationMode();
+  });
+}
+
+if (btnLiveChatToggle) {
+  btnLiveChatToggle.addEventListener("click", (e) => {
+    e.preventDefault();
+    toggleLiveVoiceMode();
+  });
+}
+
+if (btnOpenGeminiLive) {
+  btnOpenGeminiLive.addEventListener("click", (e) => {
+    e.preventDefault();
+    toggleLiveVoiceMode();
+  });
+}
 
 
 // 7. Files Drawer & Modals Handlers
@@ -1640,8 +1902,7 @@ window.copyCodeSnippet = function(btn) {
 // GEMINI LIVE VOICE BRAINSTORM CONTROLLER (EDGE STUDIO TTS & DUAL-ENGINE VAD)
 // ========================================================
 
-const btnOpenGeminiLive = document.getElementById("btnOpenGeminiLive");
-const btnCloseGeminiLive = document.getElementById("btnCloseGeminiLive");
+// (btnOpenGeminiLive and btnCloseGeminiLive declared at top of file)
 const liveOrb = document.getElementById("liveOrb");
 const liveStatusText = document.getElementById("liveStatusText");
 const liveDialogBox = document.getElementById("liveDialogBox");
@@ -2008,24 +2269,6 @@ async function openGeminiLiveModal() {
 function closeGeminiLiveModal() {
   stopLiveVoiceMode();
 }
-
-if (btnOpenGeminiLive) {
-  btnOpenGeminiLive.addEventListener("click", openGeminiLiveModal);
-}
-
-if (btnCloseGeminiLive) {
-  btnCloseGeminiLive.addEventListener("click", closeGeminiLiveModal);
-}
-
-// Global delegated clicks
-document.addEventListener("click", (e) => {
-  if (e.target && e.target.closest("#btnOpenGeminiLive")) {
-    openGeminiLiveModal();
-  }
-  if (e.target && e.target.closest("#btnCloseGeminiLive")) {
-    closeGeminiLiveModal();
-  }
-});
 
 async function startLiveSession() {
   liveHistory = [];

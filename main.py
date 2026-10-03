@@ -282,52 +282,6 @@ def api_get_file_content(project_id: str, path: str):
     except Exception as e:
         return {"path": path, "error": f"Cannot read as text: {e}"}
 
-@app.post("/api/voice-transcribe")
-async def api_voice_transcribe(file: UploadFile = File(...)):
-    try:
-        audio_bytes = await file.read()
-        import base64
-        import httpx
-
-        api_key = os.getenv("GEMINI_API_KEY", "")
-        mime = file.content_type or "audio/webm"
-        if "mp4" in mime or "m4a" in mime:
-            mime = "audio/mp4"
-        elif "wav" in mime:
-            mime = "audio/wav"
-        else:
-            mime = "audio/webm"
-
-        b64_audio = base64.b64encode(audio_bytes).decode("utf-8")
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent?key={api_key}"
-        payload = {
-            "contents": [
-                {
-                    "parts": [
-                        {"text": "Расшифруй этот аудиофайл. Верни ИСКЛЮЧИТЕЛЬНО точный распознанный текст на русском языке, без кавычек и без вводных слов."},
-                        {
-                            "inline_data": {
-                                "mime_type": mime,
-                                "data": b64_audio
-                            }
-                        }
-                    ]
-                }
-            ]
-        }
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(url, json=payload)
-            if resp.status_code == 200:
-                res_data = resp.json()
-                text = res_data["candidates"][0]["content"]["parts"][0]["text"].strip()
-                return {"success": True, "text": text}
-            else:
-                logger.warning(f"Voice transcribe error {resp.status_code}: {resp.text}")
-                return {"success": False, "error": f"API error: {resp.status_code}"}
-    except Exception as e:
-        logger.error(f"Voice transcribe exception: {e}")
-        return {"success": False, "error": str(e)}
-
 
 class SwitchAccountRequest(BaseModel):
     account_id: str

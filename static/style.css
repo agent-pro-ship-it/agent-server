@@ -783,6 +783,43 @@ pre code {
   gap: 10px;
 }
 
+/* Sparkle Pill Live Voice Button (Next to Mic) */
+.btn-live-sparkle-pill {
+  background: linear-gradient(135deg, #7c3aed 0%, #2563eb 100%);
+  color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  height: 32px;
+  padding: 0 11px;
+  border-radius: 16px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  box-shadow: 0 2px 8px rgba(124, 58, 237, 0.35);
+  transition: all 0.2s ease;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.btn-live-sparkle-pill:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 14px rgba(124, 58, 237, 0.55);
+}
+
+.btn-live-sparkle-pill.active {
+  background: linear-gradient(135deg, #059669 0%, #10b981 100%);
+  border-color: rgba(255, 255, 255, 0.6);
+  box-shadow: 0 0 14px rgba(16, 185, 129, 0.7);
+  animation: live-pulse-pill 1.4s infinite alternate;
+}
+
+@keyframes live-pulse-pill {
+  0% { box-shadow: 0 0 6px rgba(16, 185, 129, 0.4); transform: scale(1); }
+  100% { box-shadow: 0 0 16px rgba(16, 185, 129, 0.85); transform: scale(1.03); }
+}
+
 /* Red Circular Voice Button */
 .btn-circle-mic {
   width: 32px;
