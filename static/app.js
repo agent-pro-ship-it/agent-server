@@ -1361,17 +1361,10 @@ if (btnToolOpenTerminal) btnToolOpenTerminal.addEventListener("click", () => {
 });
 if (btnOpenTerminal) btnOpenTerminal.addEventListener("click", openTerminalModal);
 
-function openBrowserModal(rawUrl = null) {
-  if (modalBrowser) {
-    modalBrowser.classList.add("active");
-    if (rawUrl) {
-      navigateToBrowserUrl(rawUrl);
-    } else if (!browserIframe || !browserIframe.src || browserIframe.src === "about:blank") {
-      navigateToBrowserUrl("https://www.google.com");
-    }
-  }
-}
-
+let browserWs = null;
+const browserCanvas = document.getElementById("browserStreamCanvas");
+const browserLoader = document.getElementById("browserStreamLoader");
+const browserStatusText = document.getElementById("browserStreamStatusText");
 const btnBrowserPopup = document.getElementById("btnBrowserPopup");
 const btnBrowserAgentView = document.getElementById("btnBrowserAgentView");
 const btnBannerOpenAuth = document.getElementById("btnBannerOpenAuth");
@@ -1385,6 +1378,138 @@ const btnBrowserForward = document.getElementById("btnBrowserForward");
 const btnBrowserReload = document.getElementById("btnBrowserReload");
 const btnBrowserExternal = document.getElementById("btnBrowserExternal");
 
+function openBrowserModal(rawUrl = null) {
+  if (modalBrowser) {
+    modalBrowser.classList.add("active");
+    const targetUrl = rawUrl || (browserUrlInput ? browserUrlInput.value : "") || "https://www.google.com";
+    if (browserUrlInput) browserUrlInput.value = targetUrl;
+    connectBrowserStream(targetUrl);
+  }
+}
+
+function connectBrowserStream(initialUrl = null) {
+  if (browserWs && browserWs.readyState === WebSocket.OPEN) {
+    if (initialUrl) {
+      sendBrowserAction({ type: "navigate", url: initialUrl });
+    }
+    return;
+  }
+
+  if (browserLoader) browserLoader.style.display = "flex";
+  if (browserStatusText) browserStatusText.innerText = "Подключение к облачному Chromium...";
+
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  const host = SERVER_URL.replace(/^https?:\/\//, "");
+  const wsUrl = `${protocol}//${host}/browser/ws`;
+
+  try {
+    browserWs = new WebSocket(wsUrl);
+  } catch(e) {
+    console.warn("WebSocket init error:", e);
+    if (browserStatusText) browserStatusText.innerText = "Ошибка соединения";
+    return;
+  }
+
+  browserWs.onopen = () => {
+    if (browserStatusText) browserStatusText.innerText = "Инициализация сессии Chromium...";
+    if (initialUrl) {
+      sendBrowserAction({ type: "navigate", url: initialUrl });
+    }
+  };
+
+  browserWs.onmessage = (event) => {
+    try {
+      const data = JSON.parse(event.data);
+      if (data.type === "frame" && data.data && browserCanvas) {
+        if (browserLoader && browserLoader.style.display !== "none") {
+          browserLoader.style.display = "none";
+        }
+        const img = new Image();
+        img.onload = () => {
+          const ctx = browserCanvas.getContext("2d");
+          ctx.drawImage(img, 0, 0, browserCanvas.width, browserCanvas.height);
+        };
+        img.src = "data:image/jpeg;base64," + data.data;
+
+        if (data.url && browserUrlInput && document.activeElement !== browserUrlInput) {
+          browserUrlInput.value = data.url;
+        }
+      } else if (data.type === "navigated") {
+        if (data.url && browserUrlInput && document.activeElement !== browserUrlInput) {
+          browserUrlInput.value = data.url;
+        }
+      } else if (data.type === "error") {
+        if (browserStatusText) browserStatusText.innerText = `Ошибка: ${data.message}`;
+      }
+    } catch(err) {
+      console.warn("Browser WS message error:", err);
+    }
+  };
+
+  browserWs.onclose = () => {
+    if (browserLoader) {
+      browserLoader.style.display = "flex";
+      if (browserStatusText) browserStatusText.innerText = "Сессия браузера закрыта. Нажмите ↻ для перезапуска.";
+    }
+  };
+
+  browserWs.onerror = (e) => {
+    console.warn("Browser WS error:", e);
+    if (browserStatusText) browserStatusText.innerText = "Не удалось подключиться к Chromium на сервере";
+  };
+}
+
+function sendBrowserAction(actionObj) {
+  if (browserWs && browserWs.readyState === WebSocket.OPEN) {
+    browserWs.send(JSON.stringify(actionObj));
+  }
+}
+
+// Canvas user input
+if (browserCanvas) {
+  function handleCanvasClick(clientX, clientY) {
+    const rect = browserCanvas.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return;
+    const scaleX = browserCanvas.width / rect.width;
+    const scaleY = browserCanvas.height / rect.height;
+    const x = Math.round((clientX - rect.left) * scaleX);
+    const y = Math.round((clientY - rect.top) * scaleY);
+    sendBrowserAction({ type: "click", x, y });
+  }
+
+  browserCanvas.addEventListener("mousedown", (e) => {
+    e.preventDefault();
+    handleCanvasClick(e.clientX, e.clientY);
+  });
+
+  browserCanvas.addEventListener("touchstart", (e) => {
+    if (e.touches && e.touches.length > 0) {
+      e.preventDefault();
+      const touch = e.touches[0];
+      handleCanvasClick(touch.clientX, touch.clientY);
+    }
+  }, { passive: false });
+
+  browserCanvas.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    sendBrowserAction({ type: "scroll", deltaX: Math.round(e.deltaX), deltaY: Math.round(e.deltaY) });
+  }, { passive: false });
+}
+
+// Keyboard typing into remote Chromium
+window.addEventListener("keydown", (e) => {
+  if (!modalBrowser || !modalBrowser.classList.contains("active")) return;
+  if (document.activeElement === browserUrlInput) return; // Allow URL bar editing
+
+  if (e.key === "Backspace" || e.key === "Enter" || e.key === "Tab" || e.key === "Escape" || e.key.startsWith("Arrow")) {
+    e.preventDefault();
+    sendBrowserAction({ type: "press", key: e.key });
+  } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    e.preventDefault();
+    sendBrowserAction({ type: "type", text: e.key });
+  }
+});
+
 function openSecureAuthPopup(rawUrl = null) {
   const targetUrl = rawUrl || (browserUrlInput ? browserUrlInput.value : "") || "https://accounts.google.com";
   const w = 620;
@@ -1394,41 +1519,19 @@ function openSecureAuthPopup(rawUrl = null) {
   window.open(targetUrl, "AntigravitySecureAuth", `width=${w},height=${h},top=${top},left=${left},resizable=yes,scrollbars=yes`);
 }
 
-function navigateToBrowserUrl(rawUrl = null, useDirect = false) {
+function navigateToBrowserUrl(rawUrl = null) {
   let url = (rawUrl || (browserUrlInput ? browserUrlInput.value : "")).trim();
   if (!url) return;
   if (!url.startsWith("http://") && !url.startsWith("https://")) {
     url = "https://" + url;
   }
   if (browserUrlInput) browserUrlInput.value = url;
-
-  // Restore iframe view
-  if (browserIframe) {
-    browserIframe.style.display = "block";
-    if (!useDirect) {
-      // Route through server proxy to bypass X-Frame-Options SAMEORIGIN / 403 blocks
-      browserIframe.src = `${SERVER_URL}/api/browser/proxy?url=${encodeURIComponent(url)}`;
-    } else {
-      browserIframe.src = url;
-    }
-  }
-  if (browserScreenshotView) browserScreenshotView.style.display = "none";
-
-  // Check if site requires popup auth due to strict OAuth policies (Google Login, GitHub OAuth)
-  const isAuthSite = url.includes("accounts.google") || url.includes("github.com/login") || url.includes("render.com") || url.includes("login");
-  if (browserSecurityBanner) {
-    browserSecurityBanner.style.display = isAuthSite ? "flex" : "none";
+  if (browserWs && browserWs.readyState === WebSocket.OPEN) {
+    sendBrowserAction({ type: "navigate", url: url });
+  } else {
+    connectBrowserStream(url);
   }
 }
-
-// Listen for navigation messages from proxied pages
-window.addEventListener("message", (e) => {
-  if (e.data && e.data.type === "ANTIGRAVITY_BROWSER_NAVIGATED" && e.data.url) {
-    if (browserUrlInput) {
-      browserUrlInput.value = e.data.url;
-    }
-  }
-});
 
 async function loadAgentBrowserScreenshot(targetUrl = null) {
   const url = targetUrl || (browserUrlInput ? browserUrlInput.value : "");
@@ -1449,7 +1552,7 @@ async function loadAgentBrowserScreenshot(targetUrl = null) {
     if (data.screenshot_base64 && browserScreenshotImg && browserScreenshotView) {
       browserScreenshotImg.src = "data:image/jpeg;base64," + data.screenshot_base64;
       browserScreenshotView.style.display = "flex";
-      if (browserIframe) browserIframe.style.display = "none";
+      if (browserCanvas) browserCanvas.style.display = "none";
       if (data.url && browserUrlInput) browserUrlInput.value = data.url;
     }
   } catch(e) {
@@ -1464,7 +1567,13 @@ if (btnToolOpenBrowser) btnToolOpenBrowser.addEventListener("click", () => {
   if (toolsPopup) toolsPopup.style.display = "none";
   openBrowserModal();
 });
-if (btnCloseBrowser) btnCloseBrowser.addEventListener("click", () => modalBrowser.classList.remove("active"));
+if (btnCloseBrowser) btnCloseBrowser.addEventListener("click", () => {
+  modalBrowser.classList.remove("active");
+  if (browserWs) {
+    try { browserWs.close(); } catch(e) {}
+    browserWs = null;
+  }
+});
 if (btnBrowserGo) btnBrowserGo.addEventListener("click", () => navigateToBrowserUrl());
 if (btnBrowserPopup) btnBrowserPopup.addEventListener("click", () => openSecureAuthPopup());
 if (btnBannerOpenAuth) btnBannerOpenAuth.addEventListener("click", () => openSecureAuthPopup());
@@ -1472,29 +1581,22 @@ if (btnBrowserAgentView) btnBrowserAgentView.addEventListener("click", () => loa
 
 if (btnBrowserBack) {
   btnBrowserBack.addEventListener("click", () => {
-    try {
-      if (browserIframe && browserIframe.contentWindow) {
-        browserIframe.contentWindow.history.back();
-      }
-    } catch(e) {}
+    sendBrowserAction({ type: "back" });
   });
 }
 
 if (btnBrowserForward) {
   btnBrowserForward.addEventListener("click", () => {
-    try {
-      if (browserIframe && browserIframe.contentWindow) {
-        browserIframe.contentWindow.history.forward();
-      }
-    } catch(e) {}
+    sendBrowserAction({ type: "forward" });
   });
 }
 
 if (btnBrowserReload) {
   btnBrowserReload.addEventListener("click", () => {
-    if (browserIframe && browserIframe.src) {
-      const cur = browserIframe.src;
-      browserIframe.src = cur;
+    if (!browserWs || browserWs.readyState !== WebSocket.OPEN) {
+      connectBrowserStream(browserUrlInput ? browserUrlInput.value : null);
+    } else {
+      sendBrowserAction({ type: "reload" });
     }
   });
 }

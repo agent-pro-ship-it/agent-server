@@ -6,12 +6,15 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-# Install system dependencies (git, curl, tar, ca-certificates)
+# Install system dependencies (git, curl, tar, ca-certificates, chromium browser, fonts)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     curl \
     tar \
     ca-certificates \
+    chromium \
+    fonts-liberation \
+    procps \
     && rm -rf /var/lib/apt/lists/*
 
 # Install official Google Antigravity CLI (agy)

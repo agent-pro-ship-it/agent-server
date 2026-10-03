@@ -547,7 +547,14 @@
         <button class="browser-banner-btn" id="btnBannerOpenAuth" style="background:#d97706; color:#ffffff; border:none; padding:4px 12px; border-radius:6px; cursor:pointer; font-weight:600; font-size:11px;">Открыть окно входа ↗</button>
       </div>
       <div class="modal-body-browser">
-        <iframe id="browserIframe" src="about:blank" sandbox="allow-same-origin allow-scripts allow-popups allow-forms allow-modals"></iframe>
+        <div class="browser-canvas-wrapper" id="browserCanvasWrapper">
+          <canvas id="browserStreamCanvas" width="1280" height="800"></canvas>
+          <div class="browser-stream-loader" id="browserStreamLoader">
+            <div class="stream-spinner"></div>
+            <span id="browserStreamStatusText">Подключение к облачному Chromium...</span>
+          </div>
+        </div>
+        <iframe id="browserIframe" src="about:blank" style="display:none;" sandbox="allow-same-origin allow-scripts allow-popups allow-forms allow-modals"></iframe>
         <div class="browser-screenshot-view" id="browserScreenshotView" style="display:none;">
           <img id="browserScreenshotImg" src="" alt="Web snapshot">
         </div>

@@ -1780,6 +1780,200 @@ async def terminal_websocket(websocket: WebSocket):
         except Exception:
             pass
 
+# ========================================================
+# CLOUD CHROMIUM STREAMING WEBSOCKET (REAL-TIME CDP ENGINE)
+# ========================================================
+def get_chromium_executable():
+    import shutil
+    for path in ["/usr/bin/chromium", "/usr/bin/chromium-browser", "/usr/bin/google-chrome"]:
+        if os.path.exists(path):
+            return path
+    which_path = shutil.which("chromium") or shutil.which("google-chrome")
+    if which_path:
+        return which_path
+    win_paths = [
+        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+        os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe")
+    ]
+    for wp in win_paths:
+        if os.path.exists(wp):
+            return wp
+    return None
+
+active_cloud_browser = {
+    "context": None,
+    "page": None,
+    "playwright": None
+}
+
+@app.websocket("/browser/ws")
+async def cloud_browser_websocket(websocket: WebSocket):
+    await websocket.accept()
+    from starlette.websockets import WebSocketDisconnect
+    from playwright.async_api import async_playwright
+
+    exe = get_chromium_executable()
+    logger.info(f"Cloud browser session starting with binary: {exe}")
+
+    playwright_instance = None
+    browser_context = None
+    page = None
+    cdp = None
+
+    profile_dir = WORKSPACE_DIR / "chrome_user_profile"
+    profile_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        playwright_instance = await async_playwright().start()
+        launch_args = [
+            "--no-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-gpu",
+            "--disable-setuid-sandbox",
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--window-size=1280,800"
+        ]
+
+        browser_context = await playwright_instance.chromium.launch_persistent_context(
+            user_data_dir=str(profile_dir),
+            executable_path=exe,
+            headless=True,
+            args=launch_args,
+            viewport={"width": 1280, "height": 800},
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        )
+
+        page = browser_context.pages[0] if browser_context.pages else await browser_context.new_page()
+        active_cloud_browser["context"] = browser_context
+        active_cloud_browser["page"] = page
+        active_cloud_browser["playwright"] = playwright_instance
+
+        cdp = await browser_context.new_cdp_session(page)
+
+        async def on_screencast_frame(event):
+            try:
+                sid = event.get("sessionId")
+                data = event.get("data")
+                await websocket.send_json({
+                    "type": "frame",
+                    "data": data,
+                    "url": page.url
+                })
+                await cdp.send("Page.screencastFrameAck", {"sessionId": sid})
+            except Exception:
+                pass
+
+        cdp.on("Page.screencastFrame", lambda ev: asyncio.create_task(on_screencast_frame(ev)))
+
+        await cdp.send("Page.startScreencast", {
+            "format": "jpeg",
+            "quality": 70,
+            "maxWidth": 1280,
+            "maxHeight": 800,
+            "everyNthFrame": 1
+        })
+
+        if page.url == "about:blank":
+            try:
+                await page.goto("https://www.google.com", wait_until="domcontentloaded", timeout=25000)
+            except Exception as e:
+                logger.warning(f"Initial navigation notice: {e}")
+
+        await websocket.send_json({
+            "type": "navigated",
+            "url": page.url,
+            "title": await page.title()
+        })
+
+        while True:
+            msg = await websocket.receive_json()
+            mtype = msg.get("type")
+
+            if mtype == "click":
+                x = int(msg.get("x", 0))
+                y = int(msg.get("y", 0))
+                await page.mouse.click(x, y)
+
+            elif mtype == "type":
+                text = msg.get("text", "")
+                if text:
+                    await page.keyboard.type(text)
+
+            elif mtype == "press":
+                key = msg.get("key", "")
+                if key:
+                    await page.keyboard.press(key)
+
+            elif mtype == "scroll":
+                dx = int(msg.get("deltaX", 0))
+                dy = int(msg.get("deltaY", 0))
+                await page.mouse.wheel(dx, dy)
+
+            elif mtype == "navigate":
+                target = msg.get("url", "").strip()
+                if target:
+                    if not target.startswith("http://") and not target.startswith("https://"):
+                        target = "https://" + target
+                    try:
+                        await page.goto(target, wait_until="domcontentloaded", timeout=25000)
+                    except Exception as ge:
+                        logger.warning(f"Goto notice: {ge}")
+                    await websocket.send_json({
+                        "type": "navigated",
+                        "url": page.url,
+                        "title": await page.title()
+                    })
+
+            elif mtype == "back":
+                try:
+                    await page.go_back(timeout=15000)
+                except Exception:
+                    pass
+                await websocket.send_json({
+                    "type": "navigated",
+                    "url": page.url,
+                    "title": await page.title()
+                })
+
+            elif mtype == "forward":
+                try:
+                    await page.go_forward(timeout=15000)
+                except Exception:
+                    pass
+                await websocket.send_json({
+                    "type": "navigated",
+                    "url": page.url,
+                    "title": await page.title()
+                })
+
+            elif mtype == "reload":
+                try:
+                    await page.reload(timeout=15000)
+                except Exception:
+                    pass
+
+    except WebSocketDisconnect:
+        logger.info("Cloud browser WebSocket client disconnected.")
+    except Exception as e:
+        logger.error(f"Cloud browser runtime error: {e}")
+        try:
+            await websocket.send_json({"type": "error", "message": str(e)})
+        except Exception:
+            pass
+    finally:
+        try:
+            if browser_context:
+                await browser_context.close()
+            if playwright_instance:
+                await playwright_instance.stop()
+        except Exception:
+            pass
+        active_cloud_browser["context"] = None
+        active_cloud_browser["page"] = None
+        active_cloud_browser["playwright"] = None
+
 # Standalone UI endpoint if accessed directly
 @app.get("/")
 def root():
