@@ -1300,20 +1300,36 @@ if (typeof window !== "undefined" && "speechSynthesis" in window) {
 }
 
 // 2. Open / Close Live Modal
+function openGeminiLiveModal() {
+  initNaturalVoices();
+  const m = document.getElementById("modalGeminiLive");
+  if (m) m.classList.add("active");
+  startLiveSession();
+}
+
+function closeGeminiLiveModal() {
+  stopLiveSession();
+  const m = document.getElementById("modalGeminiLive");
+  if (m) m.classList.remove("active");
+}
+
 if (btnOpenGeminiLive) {
-  btnOpenGeminiLive.addEventListener("click", () => {
-    initNaturalVoices();
-    modalGeminiLive.classList.add("active");
-    startLiveSession();
-  });
+  btnOpenGeminiLive.addEventListener("click", openGeminiLiveModal);
 }
 
 if (btnCloseGeminiLive) {
-  btnCloseGeminiLive.addEventListener("click", () => {
-    stopLiveSession();
-    modalGeminiLive.classList.remove("active");
-  });
+  btnCloseGeminiLive.addEventListener("click", closeGeminiLiveModal);
 }
+
+// Delegated click backup so clicking inner spans of button always opens modal
+document.addEventListener("click", (e) => {
+  if (e.target && e.target.closest("#btnOpenGeminiLive")) {
+    openGeminiLiveModal();
+  }
+  if (e.target && e.target.closest("#btnCloseGeminiLive")) {
+    closeGeminiLiveModal();
+  }
+});
 
 function startLiveSession() {
   liveHistory = [];
@@ -1397,7 +1413,8 @@ function startLiveListening() {
 
     liveSpeechRecognizer.onend = () => {
       // Auto-restart if modal is still active and not speaking
-      if (modalGeminiLive.classList.contains("active") && liveIsListening && !window.speechSynthesis.speaking) {
+      const m = document.getElementById("modalGeminiLive");
+      if (m && m.classList.contains("active") && liveIsListening && !window.speechSynthesis.speaking) {
         try { liveSpeechRecognizer.start(); } catch(e) {}
       }
     };
@@ -1447,7 +1464,8 @@ async function handleUserLiveUtterance(userText) {
       // Speak reply with studio quality voice
       speakNaturalReply(reply, () => {
         // Resume listening after speaking
-        if (modalGeminiLive.classList.contains("active")) {
+        const m = document.getElementById("modalGeminiLive");
+        if (m && m.classList.contains("active")) {
           liveOrb.className = "live-orb listening";
           liveStatusText.innerText = "🟢 Слушаю вас... Говорите дальше";
           startLiveListening();
@@ -1556,7 +1574,8 @@ if (btnTransferPrompt) {
 
         // Stop live session & close modal
         stopLiveSession();
-        modalGeminiLive.classList.remove("active");
+        const m = document.getElementById("modalGeminiLive");
+        if (m) m.classList.remove("active");
 
         // Transfer into Antigravity input box!
         taskInput.value = promptText;
@@ -1578,8 +1597,9 @@ if (btnTransferPrompt) {
 
 // Close Live modal on background click
 window.addEventListener("click", (e) => {
-  if (e.target === modalGeminiLive) {
+  const m = document.getElementById("modalGeminiLive");
+  if (m && e.target === m) {
     stopLiveSession();
-    modalGeminiLive.classList.remove("active");
+    m.classList.remove("active");
   }
 });
