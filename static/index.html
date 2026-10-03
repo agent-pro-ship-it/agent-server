@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>Google Antigravity Cloud</title>
   <link rel="manifest" href="manifest.json">
-  <link rel="stylesheet" href="style.css?v=4.0">
+  <link rel="stylesheet" href="style.css?v=4.1">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -229,12 +229,19 @@
           </div>
 
           <div class="input-card">
-            <!-- Recording Voice Status Indicator with Waveform -->
+            <!-- Recording Voice Status Indicator with Waveform & Live Hardware Level -->
             <div class="voice-status-bar" id="voiceStatusBar" style="display:none;">
               <div class="voice-wave">
                 <span class="bar"></span><span class="bar"></span><span class="bar"></span><span class="bar"></span>
               </div>
               <span id="voiceStatusText">Идет запись голоса... Говорите задачу</span>
+              <div class="mic-level-box" title="Реальный уровень звука с микрофона" style="display:flex; align-items:center; gap:6px; margin-left:auto;">
+                <span style="font-size:11px; color:#6b7280; font-weight:500;">Сигнал:</span>
+                <div style="width:50px; height:8px; background:rgba(0,0,0,0.1); border-radius:4px; overflow:hidden;">
+                  <div id="micLevelFill" style="width:0%; height:100%; background:#10b981; transition:width 0.08s ease;"></div>
+                </div>
+                <select id="micDeviceSelect" style="display:none; font-size:11px; padding:2px 4px; border:1px solid #d1d5db; border-radius:4px; background:#fff; max-width:130px; outline:none;" title="Выбрать активный микрофон"></select>
+              </div>
             </div>
 
             <textarea
@@ -631,9 +638,6 @@
 
   <input type="file" id="filePicker" style="display:none;">
 
-  <!-- Open-Source Silero VAD (WebAssembly) Engine -->
-  <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.14.0/dist/ort.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.19/dist/bundle.min.js"></script>
-  <script src="app.js?v=4.0"></script>
+  <script src="app.js?v=4.1"></script>
 </body>
 </html>

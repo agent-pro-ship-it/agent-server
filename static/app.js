@@ -514,12 +514,23 @@ if (crumbProject) {
   });
 }
 
-// 6. Seamless In-Chat Voice Module with Open-Source Silero VAD (WebAssembly)
+// 6. Robust Hardware Voice Engine with Live VU Level Meter & Multi-Mic Selection
+const micLevelFill = document.getElementById("micLevelFill");
+const micDeviceSelect = document.getElementById("micDeviceSelect");
+
 let currentBotAudio = null;
-let sileroVadInstance = null;
 let isContinuousLiveVoiceActive = false;
 let mediaStream = null;
 let speechRecognizer = null;
+let audioCtx = null;
+let analyserNode = null;
+let micSourceNode = null;
+let vuAnimationFrameId = null;
+
+let isUserSpeakingNow = false;
+let speechStartMs = 0;
+let silenceStartMs = 0;
+let liveTranscribedText = "";
 
 function stopBotVoiceAudio() {
   if (currentBotAudio) {
@@ -538,11 +549,11 @@ function playBotVoiceAudio(base64Mp3) {
     currentBotAudio.onended = () => {
       currentBotAudio = null;
       if (isContinuousLiveVoiceActive) {
-        updateVoiceStatusUI("🎙 Слушаю вас... (Silero VAD)");
+        updateVoiceStatusUI("🎙 Слушаю вас... Говорите в микрофон");
       }
     };
     currentBotAudio.play().catch(err => {
-      console.warn("Audio play prevented:", err);
+      console.warn("Audio autoplay blocked:", err);
     });
     updateVoiceStatusUI("🔊 Antigravity говорит (Dmitry Studio)...");
   } catch (err) {
@@ -559,6 +570,57 @@ function updateVoiceStatusUI(text, isRec = false) {
   }
 }
 
+async function populateMicDevices() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const audioInputs = devices.filter(d => d.kind === "audioinput");
+    if (micDeviceSelect) {
+      const currentVal = micDeviceSelect.value;
+      micDeviceSelect.innerHTML = "";
+      if (audioInputs.length > 1) {
+        micDeviceSelect.style.display = "inline-block";
+        audioInputs.forEach((dev, idx) => {
+          const opt = document.createElement("option");
+          opt.value = dev.deviceId;
+          opt.innerText = dev.label || `Микрофон ${idx + 1}`;
+          if (dev.deviceId === currentVal) opt.selected = true;
+          micDeviceSelect.appendChild(opt);
+        });
+      } else {
+        micDeviceSelect.style.display = "none";
+      }
+    }
+  } catch(e) {
+    console.warn("Device enumeration error:", e);
+  }
+}
+
+if (micDeviceSelect) {
+  micDeviceSelect.addEventListener("change", async () => {
+    if (isContinuousLiveVoiceActive) {
+      await stopLiveVoiceMode();
+      await startLiveVoiceMode();
+    }
+  });
+}
+
+function handleMicError(err) {
+  let msg = "Не удалось получить доступ к микрофону:\n\n";
+  if (err.name === "NotAllowedError" || err.name === "PermissionDeniedError") {
+    msg += "1. В браузере (Chrome/Edge): нажмите на значок замочка слева в адресной строке и включите 'Микрофон'.\n" +
+           "2. В Windows: откройте «Параметры Windows» -> «Конфиденциальность» -> «Микрофон» и убедитесь, что включен доступ для браузера.";
+  } else if (err.name === "NotFoundError" || err.name === "DevicesNotFoundError") {
+    msg += "Микрофон не обнаружен на ноутбуке. Подключите гарнитуру или проверьте подключение в диспетчере звука.";
+  } else if (err.name === "NotReadableError" || err.name === "TrackStartError") {
+    msg += "Микрофон занят другой программой (Zoom, Discord, Telegram, Skype). Закройте их и повторите попытку.";
+  } else {
+    msg += (err.message || err.name);
+  }
+  alert(msg);
+  updateVoiceStatusUI("❌ Микрофон недоступен");
+}
+
 async function toggleLiveVoiceMode() {
   if (isContinuousLiveVoiceActive) {
     stopLiveVoiceMode();
@@ -570,7 +632,7 @@ async function toggleLiveVoiceMode() {
 async function startLiveVoiceMode() {
   stopBotVoiceAudio();
   isContinuousLiveVoiceActive = true;
-  
+
   if (btnOpenGeminiLive) {
     btnOpenGeminiLive.classList.add("active");
     btnOpenGeminiLive.title = "Выключить живой голосовой диалог";
@@ -578,112 +640,251 @@ async function startLiveVoiceMode() {
   if (btnMic) {
     btnMic.classList.add("live-active");
   }
-  updateVoiceStatusUI("⏳ Подключение Silero VAD нейросети...");
+  updateVoiceStatusUI("🔴 Подключение к микрофону ноутбука...");
 
-  // 1. Try Official Open-Source Silero VAD (WebAssembly)
-  if (window.vad && typeof window.vad.MicVAD === "function") {
-    try {
-      sileroVadInstance = await window.vad.MicVAD.new({
-        onSpeechStart: () => {
-          // BARGE-IN: User started talking -> immediately stop bot speech
-          stopBotVoiceAudio();
-          updateVoiceStatusUI("🎙 Слышу ваш голос...", true);
-        },
-        onSpeechEnd: async (audioFloat32) => {
-          updateVoiceStatusUI("⏳ Распознавание речи...", false);
-          try {
-            const wavBlob = window.vad.utils.encodeWAV(audioFloat32);
-            if (wavBlob && wavBlob.size > 800) {
-              const formData = new FormData();
-              formData.append("file", wavBlob, "speech.wav");
-              const resp = await fetch(`${SERVER_URL}/api/voice-transcribe`, {
-                method: "POST",
-                body: formData
-              });
-              if (resp.ok) {
-                const resJson = await resp.json();
-                const text = (resJson.text || "").trim();
-                if (text && text !== "NONE") {
-                  updateVoiceStatusUI("💭 Antigravity думает...", false);
-                  await sendTask(text, true);
-                  return;
-                }
-              }
-            }
-          } catch (e) {
-            console.warn("Silero VAD speech process error:", e);
-          }
-          if (isContinuousLiveVoiceActive) {
-            updateVoiceStatusUI("🎙 Слушаю вас... (Silero VAD)");
-          }
-        },
-        onVADMisfire: () => {
-          if (isContinuousLiveVoiceActive) {
-            updateVoiceStatusUI("🎙 Слушаю вас... (Silero VAD)", false);
-          }
-        }
-      });
-      await sileroVadInstance.start();
-      updateVoiceStatusUI("🎙 Живой диалог активен (Silero VAD) • Говорите");
-      return;
-    } catch (vadErr) {
-      console.warn("Silero VAD initiation error, falling back to Web Speech:", vadErr);
+  // 1. Request hardware microphone stream
+  try {
+    const selectedDeviceId = (micDeviceSelect && micDeviceSelect.value) ? micDeviceSelect.value : null;
+    const audioConstraints = {
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true
+    };
+    if (selectedDeviceId) {
+      audioConstraints.deviceId = { exact: selectedDeviceId };
     }
+
+    try {
+      mediaStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
+    } catch(primaryErr) {
+      console.warn("Primary mic constraints failed, trying basic audio:true", primaryErr);
+      mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    }
+    
+    // Refresh device list with granted labels
+    await populateMicDevices();
+
+  } catch(err) {
+    console.error("Microphone getUserMedia failed completely:", err);
+    stopLiveVoiceMode();
+    handleMicError(err);
+    return;
   }
 
-  // 2. Fallback to Web Speech API / MediaRecorder if VAD WASM not loaded
-  startWebSpeechFallback();
-}
+  // 2. Real-time Web Audio API Hardware Volume Meter & Speech Energy Detector
+  try {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!audioCtx || audioCtx.state === "closed") {
+      audioCtx = new AudioContextClass();
+    }
+    if (audioCtx.state === "suspended") {
+      await audioCtx.resume();
+    }
 
-function startWebSpeechFallback() {
-  updateVoiceStatusUI("🎙 Говорите задачу...");
+    analyserNode = audioCtx.createAnalyser();
+    analyserNode.fftSize = 512;
+    analyserNode.smoothingTimeConstant = 0.25;
+
+    micSourceNode = audioCtx.createMediaStreamSource(mediaStream);
+    micSourceNode.connect(analyserNode);
+
+    runAudioMeterLoop();
+  } catch(audioCtxErr) {
+    console.warn("Web Audio VU meter init error (recording still works):", audioCtxErr);
+  }
+
+  // 3. Start MediaRecorder
+  audioChunks = [];
+  try {
+    let options = {};
+    if (typeof MediaRecorder !== "undefined") {
+      if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) options = { mimeType: 'audio/webm;codecs=opus' };
+      else if (MediaRecorder.isTypeSupported('audio/webm')) options = { mimeType: 'audio/webm' };
+      else if (MediaRecorder.isTypeSupported('audio/mp4')) options = { mimeType: 'audio/mp4' };
+    }
+    mediaRecorder = new MediaRecorder(mediaStream, options);
+    mediaRecorder.ondataavailable = (e) => {
+      if (e.data && e.data.size > 0) audioChunks.push(e.data);
+    };
+    mediaRecorder.start(250);
+  } catch(recErr) {
+    console.warn("MediaRecorder start error:", recErr);
+  }
+
+  // 4. Parallel Web Speech API for real-time live preview typing
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (SpeechRecognition) {
     try {
       speechRecognizer = new SpeechRecognition();
       speechRecognizer.lang = "ru-RU";
       speechRecognizer.continuous = true;
-      speechRecognizer.interimResults = false;
+      speechRecognizer.interimResults = true;
 
-      speechRecognizer.onresult = async (event) => {
-        let transcript = "";
-        for (let i = event.resultIndex; i < event.results.length; ++i) {
-          if (event.results[i].isFinal) transcript += event.results[i][0].transcript + " ";
+      speechRecognizer.onresult = (event) => {
+        let interim = "";
+        let final = "";
+        for (let i = 0; i < event.results.length; ++i) {
+          if (event.results[i].isFinal) final += event.results[i][0].transcript + " ";
+          else interim += event.results[i][0].transcript;
         }
-        transcript = transcript.trim();
-        if (transcript) {
-          updateVoiceStatusUI("💭 Antigravity думает...", false);
-          await sendTask(transcript, true);
+        const text = (final + interim).trim();
+        if (text) {
+          liveTranscribedText = text;
+          taskInput.value = text;
+          taskInput.style.height = "auto";
+          taskInput.style.height = (taskInput.scrollHeight) + "px";
+          updateVoiceStatusUI("🎙 " + text, true);
         }
       };
 
+      speechRecognizer.onerror = (e) => {
+        console.warn("SpeechRecognition preview notice:", e.error);
+      };
+
       speechRecognizer.onend = () => {
-        if (isContinuousLiveVoiceActive) {
+        if (isContinuousLiveVoiceActive && speechRecognizer) {
           try { speechRecognizer.start(); } catch(e) {}
         }
       };
 
       speechRecognizer.start();
     } catch(e) {
-      console.warn("Web Speech fallback error:", e);
+      console.warn("Web Speech start exception:", e);
     }
+  }
+
+  updateVoiceStatusUI("🎙 Слушаю вас... Говорите в микрофон");
+}
+
+function runAudioMeterLoop() {
+  if (!isContinuousLiveVoiceActive || !analyserNode) return;
+
+  const dataArray = new Uint8Array(analyserNode.frequencyBinCount);
+  analyserNode.getByteFrequencyData(dataArray);
+
+  let sum = 0;
+  for (let i = 0; i < dataArray.length; i++) {
+    sum += dataArray[i];
+  }
+  const avgVolume = sum / dataArray.length;
+  const percent = Math.min(100, Math.round((avgVolume / 120) * 100));
+
+  // Update hardware VU meter visually
+  if (micLevelFill) {
+    micLevelFill.style.width = percent + "%";
+    if (percent > 15) micLevelFill.style.background = "#10b981"; // Active green
+    else micLevelFill.style.background = "#9ca3af"; // Idle gray
+  }
+
+  // Voice Activity Detection (VAD) via real audio energy
+  const now = Date.now();
+  if (avgVolume > 16) {
+    // BARGE-IN: User is speaking! Immediately silence any bot audio!
+    stopBotVoiceAudio();
+
+    if (!isUserSpeakingNow) {
+      isUserSpeakingNow = true;
+      speechStartMs = now;
+      silenceStartMs = 0;
+      updateVoiceStatusUI("🎙 Слышу ваш голос...", true);
+    } else {
+      silenceStartMs = 0;
+    }
+  } else {
+    // Below threshold (silence)
+    if (isUserSpeakingNow) {
+      if (silenceStartMs === 0) {
+        silenceStartMs = now;
+      } else if (now - silenceStartMs > 900) {
+        // 900ms silence detected after speech -> User finished speaking!
+        isUserSpeakingNow = false;
+        silenceStartMs = 0;
+        onUserFinishedUtterance();
+      }
+    }
+  }
+
+  vuAnimationFrameId = requestAnimationFrame(runAudioMeterLoop);
+}
+
+async function onUserFinishedUtterance() {
+  updateVoiceStatusUI("⏳ Обрабатываю речь...", false);
+
+  const capturedText = liveTranscribedText.trim();
+  liveTranscribedText = "";
+
+  if (capturedText.length > 1) {
+    taskInput.value = "";
+    taskInput.style.height = "auto";
+    updateVoiceStatusUI("💭 Antigravity думает...", false);
+    await sendTask(capturedText, true);
+    return;
+  }
+
+  // If live Web Speech transcript was empty, fallback to recorded chunks via Gemini STT
+  if (audioChunks.length > 0 && mediaRecorder) {
+    const currentChunks = [...audioChunks];
+    audioChunks = [];
+    const mime = mediaRecorder.mimeType || "audio/webm";
+    const audioBlob = new Blob(currentChunks, { type: mime });
+
+    if (audioBlob.size > 800) {
+      try {
+        const formData = new FormData();
+        formData.append("file", audioBlob, "speech.webm");
+        const resp = await fetch(`${SERVER_URL}/api/voice-transcribe`, {
+          method: "POST",
+          body: formData
+        });
+        if (resp.ok) {
+          const resJson = await resp.json();
+          const text = (resJson.text || "").trim();
+          if (text && text !== "NONE") {
+            taskInput.value = "";
+            taskInput.style.height = "auto";
+            updateVoiceStatusUI("💭 Antigravity думает...", false);
+            await sendTask(text, true);
+            return;
+          }
+        }
+      } catch(err) {
+        console.warn("Cloud transcribe fallback error:", err);
+      }
+    }
+  }
+
+  if (isContinuousLiveVoiceActive) {
+    updateVoiceStatusUI("🎙 Слушаю вас... Говорите в микрофон");
   }
 }
 
 function stopLiveVoiceMode() {
   isContinuousLiveVoiceActive = false;
+  isUserSpeakingNow = false;
   stopBotVoiceAudio();
 
-  if (sileroVadInstance) {
-    try { sileroVadInstance.pause(); } catch(e) {}
+  if (vuAnimationFrameId) {
+    cancelAnimationFrame(vuAnimationFrameId);
+    vuAnimationFrameId = null;
   }
-  if (speechRecognizer) {
-    try { speechRecognizer.stop(); } catch(e) {}
-    speechRecognizer = null;
+
+  if (micSourceNode) {
+    try { micSourceNode.disconnect(); } catch(e) {}
+    micSourceNode = null;
   }
+
+  if (mediaRecorder && mediaRecorder.state !== "inactive") {
+    try { mediaRecorder.stop(); } catch(e) {}
+  }
+
   if (mediaStream) {
     try { mediaStream.getTracks().forEach(t => t.stop()); } catch(e) {}
     mediaStream = null;
+  }
+
+  if (speechRecognizer) {
+    try { speechRecognizer.stop(); } catch(e) {}
+    speechRecognizer = null;
   }
 
   if (btnOpenGeminiLive) {
@@ -696,6 +897,9 @@ function stopLiveVoiceMode() {
   }
   if (voiceStatusBar) {
     voiceStatusBar.style.display = "none";
+  }
+  if (micLevelFill) {
+    micLevelFill.style.width = "0%";
   }
 }
 
