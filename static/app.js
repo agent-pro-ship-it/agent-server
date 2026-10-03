@@ -372,6 +372,43 @@ async function sendTask(customText = null, isVoice = false) {
     return;
   }
 
+  // Direct Browser Interception from Chat (/browser, открой браузер, можешь открыть браузер, etc.)
+  const lower = text.toLowerCase();
+  if (lower === "/browser" || lower.startsWith("/browser ") ||
+      lower.includes("открой браузер") || lower.includes("открыть браузер") ||
+      lower.includes("запусти браузер") || lower.includes("покажи браузер") ||
+      lower.includes("можешь открыть браузер") || lower.includes("открой сайт")) {
+    appendUserMessage(text);
+    let targetUrl = "https://accounts.google.com";
+    const urlMatch = text.match(/https?:\/\/[^\s]+/i);
+    if (urlMatch) targetUrl = urlMatch[0];
+    else if (lower.includes("github")) targetUrl = "https://github.com/login";
+    else if (lower.includes("telegram")) targetUrl = "https://web.telegram.org";
+    else if (lower.includes("render")) targetUrl = "https://dashboard.render.com";
+    else if (lower.includes("google")) targetUrl = "https://accounts.google.com";
+    else if (lower.startsWith("/browser ")) {
+      const param = text.slice(9).trim();
+      if (param) targetUrl = param.startsWith("http") ? param : "https://" + param;
+    }
+
+    openBrowserModal(targetUrl);
+    appendAssistantMessage(`
+      <div class="terminal-chat-card success">
+        <div class="terminal-chat-header">
+          <span class="terminal-chat-title">🌐 Встроенный браузер Antigravity: <code>${escapeHtml(targetUrl)}</code></span>
+          <span class="terminal-badge badge-ok">Браузер запущен</span>
+        </div>
+        <div class="terminal-chat-output" style="color:#e2e8f0;">
+          Окно браузера открыто прямо на экране! Вы можете войти в аккаунт (Google OAuth, GitHub, Telegram), ввести данные или поручить мне веб-автоматизацию на странице.
+        </div>
+        <div class="terminal-chat-actions">
+          <button class="msg-action-btn" onclick="openBrowserModal('${escapeHtml(targetUrl)}')">🔍 Развернуть окно браузера</button>
+        </div>
+      </div>
+    `);
+    return;
+  }
+
   appendUserMessage(text);
 
   // Live Antigravity Process Card with Animated Steps
@@ -466,7 +503,30 @@ async function sendTask(customText = null, isVoice = false) {
     </details>
     `;
 
-    appendAssistantMessage(processAccordion + formatMarkdown(explanationText));
+    // Check if the assistant requested to open the browser
+    const browserTagMatch = explanationText.match(/\[OPEN_BROWSER(?::\s*([^\]]+))?\]/i);
+    let browserCardHtml = "";
+    if (browserTagMatch) {
+      const targetUrl = browserTagMatch[1] ? browserTagMatch[1].trim() : "https://accounts.google.com";
+      explanationText = explanationText.replace(/\[OPEN_BROWSER(?::\s*[^\]]+)?\]/gi, '').trim();
+      browserCardHtml = `
+        <div class="terminal-chat-card success" style="margin-top:10px;">
+          <div class="terminal-chat-header">
+            <span class="terminal-chat-title">🌐 Встроенный браузер: <code>${escapeHtml(targetUrl)}</code></span>
+            <span class="terminal-badge badge-ok">Браузер открыт</span>
+          </div>
+          <div class="terminal-chat-output" style="color:#e2e8f0;">
+            Окно встроенного браузера открыто. Вы можете войти в аккаунт или поручить агенту веб-автоматизацию.
+          </div>
+          <div class="terminal-chat-actions">
+            <button class="msg-action-btn" onclick="openBrowserModal('${escapeHtml(targetUrl)}')">🔍 Развернуть окно браузера</button>
+          </div>
+        </div>
+      `;
+      openBrowserModal(targetUrl);
+    }
+
+    appendAssistantMessage(processAccordion + formatMarkdown(explanationText) + browserCardHtml);
     if (activeProject) loadProjectFiles(activeProject.id);
 
     // If voice reply was returned, play it directly

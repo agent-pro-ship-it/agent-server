@@ -902,6 +902,42 @@ async def run_autonomous_task(req: TaskRequest):
         cmd = task.replace("bash:", "").replace("$ ", "").strip()
         return execute_command(CommandRequest(command=cmd, project_id=req.project_id))
 
+    # Direct browser open requests (e.g., "Ты можешь открыть браузер сейчас?")
+    lower_task = task.lower()
+    if any(q in lower_task for q in ["открой браузер", "открыть браузер", "можешь открыть браузер", "запусти браузер", "покажи браузер", "open browser"]):
+        target_url = "https://accounts.google.com"
+        import re
+        url_match = re.search(r'https?://\S+', task)
+        if url_match:
+            target_url = url_match.group(0)
+        elif "github" in lower_task:
+            target_url = "https://github.com/login"
+        elif "telegram" in lower_task:
+            target_url = "https://web.telegram.org"
+        elif "render" in lower_task:
+            target_url = "https://dashboard.render.com"
+        elif "google" in lower_task:
+            target_url = "https://accounts.google.com"
+
+        explanation = (
+            f"Да, конечно! Открываю встроенный визуальный браузер прямо сейчас:\n\n"
+            f"[OPEN_BROWSER: {target_url}]\n\n"
+            f"Окно браузера открыто прямо на экране. Вы можете войти в свой аккаунт, просмотреть веб-страницы или поручить мне веб-автоматизацию."
+        )
+        audio_b64 = None
+        if req.voice_mode:
+            audio_b64 = await synthesize_speech_for_reply("Да, конечно! Открываю встроенный визуальный браузер на экране.", req.voice or "ru-RU-DmitryNeural")
+
+        return {
+            "success": True,
+            "project_id": req.project_id,
+            "task": task,
+            "explanation": explanation,
+            "voice_mode": req.voice_mode,
+            "voice_audio_base64": audio_b64,
+            "model": "Antigravity Browser Controller"
+        }
+
     ensure_antigravity_auth()
 
     # FAST-PATH FOR LIVE VOICE CONVERSATION (0.8 - 1.5s RESPONSE TIME)
