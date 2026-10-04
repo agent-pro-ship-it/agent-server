@@ -1,4 +1,4 @@
-const CACHE_NAME = "antigravity-v4.7";
+const CACHE_NAME = "antigravity-v5.1";
 
 self.addEventListener("install", (e) => {
   self.skipWaiting();
