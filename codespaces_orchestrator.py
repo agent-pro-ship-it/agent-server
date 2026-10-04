@@ -12,21 +12,33 @@ REPO_OWNER = "agent-pro-ship-it"
 REPO_NAME = "agent-server"
 CODESPACE_NAME = "curly-computing-machine-r76qg4p65jg7cpw49"
 
+LOCAL_INSPECTION_COMMANDS = (
+    "cat ", "ls", "ls ", "head ", "tail ", "grep ", "which ", "ps ", "ps", "pwd", "uname", "whoami", "echo ", "sed ", "touch ", "mkdir ", "find "
+)
+
 HEAVY_KEYWORDS = [
-    "парсинг", "парсер", "спарси", "scrape", "scraping", "crawler", "beautifulsoup", "selenium", "playwright",
-    "видео", "конвертируй видео", "ffmpeg", "нарезка", "render video", "cv2", "opencv",
-    "тяжелый", "тяжелая", "массовый", "100 страниц", "сотни страниц", "тысяч",
-    "pip install torch", "pip install pandas", "pip install scipy", "pip install tensorflow", "pip install transformers",
-    "torch", "tensorflow", "keras", "transformers", "huggingface", "whisper",
-    "machine learning", "датасет", "большой архив", "turbo", "турбо", "8gb", "codespace", "codespaces"
+    "парсинг", "парсер", "спарси", "scrape", "scraping", "crawler", "beautifulsoup",
+    "видеомонтаж", "конвертируй видео", "ffmpeg", "нарезка", "render video", "cv2", "opencv",
+    "тяжелый", "тяжелая", "массовый", "100 страниц", "сотни страниц",
+    "pip install torch", "pip install scipy", "pip install tensorflow", "pip install transformers",
+    "torch", "tensorflow", "keras", "transformers", "whisper",
+    "machine learning", "датасет", "большой архив", "--turbo", "турбо режим", "8gb ram", "8 гб"
 ]
 
 def is_heavy_task(task_text: str, command: Optional[str] = None) -> Tuple[bool, str]:
+    # Never offload inspection shell commands unless explicit turbo requested
+    if command:
+        cmd_clean = command.strip().lower()
+        if any(cmd_clean == p.strip() or cmd_clean.startswith(p) for p in LOCAL_INSPECTION_COMMANDS):
+            if "--turbo" not in cmd_clean and "# turbo" not in cmd_clean:
+                return False, "Локальная команда инспекции"
+
     combined = ((task_text or "") + " " + (command or "")).lower()
     for kw in HEAVY_KEYWORDS:
         if kw in combined:
             return True, f"Обнаружена ресурсоемкая операция ({kw})"
     return False, "Штатная задача узла Render"
+
 
 async def ensure_codespace_ready() -> bool:
     headers = {

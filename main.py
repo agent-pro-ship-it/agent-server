@@ -69,6 +69,46 @@ try:
 except Exception as e:
     logger.warning(f"AccountManager initialization notice: {e}")
 
+def restore_workspace_from_storj():
+    """Restores all project files, history, and configs from Storj S3 to local WORKSPACE_DIR."""
+    if not s3_client:
+        return
+    try:
+        paginator = s3_client.get_paginator('list_objects_v2')
+        for page in paginator.paginate(Bucket=STORJ_BUCKET):
+            for obj in page.get("Contents", []):
+                key = obj.get("Key", "")
+                if not key or key.startswith("auth/") or key.startswith(".git/"):
+                    continue
+                if key.startswith("projects/"):
+                    rel_path = key[len("projects/"):]
+                    local_target = WORKSPACE_DIR / rel_path
+                elif key.startswith("workspace/"):
+                    rel_path = key[len("workspace/"):]
+                    local_target = WORKSPACE_DIR / rel_path
+                else:
+                    local_target = WORKSPACE_DIR / key
+
+                if key.endswith("projects.json") and local_target.exists():
+                    continue
+
+                if not local_target.exists() or local_target.stat().st_size != obj.get("Size", 0):
+                    try:
+                        local_target.parent.mkdir(parents=True, exist_ok=True)
+                        res = s3_client.get_object(Bucket=STORJ_BUCKET, Key=key)
+                        local_target.write_bytes(res["Body"].read())
+                        logger.info(f"Restored from Storj S3: {key} -> {local_target}")
+                    except Exception as fe:
+                        logger.warning(f"Error restoring {key}: {fe}")
+        logger.info("Workspace sync from Storj S3 completed.")
+    except Exception as e:
+        logger.error(f"Error during workspace sync from Storj: {e}")
+
+try:
+    restore_workspace_from_storj()
+except Exception as e:
+    logger.warning(f"Startup workspace restore notice: {e}")
+
 from codespaces_orchestrator import is_heavy_task, execute_in_codespace
 
 class TaskRequest(BaseModel):
@@ -101,6 +141,20 @@ DEFAULT_PROJECTS = [
     {"id": "crm-debug", "name": "отладка срм антиг...", "task": "Фикс багов и деплой на сервер", "time": "2mo", "active": False}
 ]
 
+def sanitize_projects(projs: list) -> list:
+    """Detects and fixes corrupt question-mark encodings in project names."""
+    fixed = []
+    defaults_by_id = {p["id"]: p for p in DEFAULT_PROJECTS}
+    for p in projs:
+        p_id = p.get("id", "")
+        p_name = p.get("name", "")
+        if not p_name or "" in p_name or set(p_name.strip()) == {"?"}:
+            if p_id in defaults_by_id:
+                p["name"] = defaults_by_id[p_id]["name"]
+                p["task"] = defaults_by_id[p_id]["task"]
+        fixed.append(p)
+    return fixed
+
 def get_all_projects():
     if not PROJECTS_FILE.exists():
         try:
@@ -109,6 +163,11 @@ def get_all_projects():
             pass
     try:
         projs = json.loads(PROJECTS_FILE.read_text(encoding="utf-8"))
+        projs = sanitize_projects(projs)
+        try:
+            PROJECTS_FILE.write_text(json.dumps(projs, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception:
+            pass
     except Exception:
         projs = DEFAULT_PROJECTS
     for p in projs:
@@ -255,8 +314,34 @@ def api_update_project(project_id: str, req: ProjectUpdateRequest):
 @app.get("/api/projects/{project_id}/files")
 def api_get_project_files(project_id: str):
     p_dir = WORKSPACE_DIR / project_id
-    if not p_dir.exists():
-        return {"files": []}
+    p_dir.mkdir(parents=True, exist_ok=True)
+    
+    local_count = sum(len(f) for _, _, f in os.walk(str(p_dir)))
+    if local_count == 0 and s3_client:
+        try:
+            prefix = f"projects/{project_id}/"
+            res = s3_client.list_objects_v2(Bucket=STORJ_BUCKET, Prefix=prefix)
+            for item in res.get("Contents", []):
+                k = item.get("Key", "")
+                rel_path = k[len(prefix):]
+                if rel_path:
+                    dest = p_dir / rel_path
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    obj = s3_client.get_object(Bucket=STORJ_BUCKET, Key=k)
+                    dest.write_bytes(obj["Body"].read())
+        except Exception as se:
+            logger.warning(f"Error fetching files for {project_id} from Storj: {se}")
+
+    # Ensure at least README.md exists so project is never empty
+    if not any(p_dir.iterdir()):
+        readme = p_dir / "README.md"
+        readme.write_text(f"# Проект: {project_id}\n\nРабочая папка проекта в Antigravity Cloud.\n", encoding="utf-8")
+        if s3_client:
+            try:
+                s3_client.put_object(Bucket=STORJ_BUCKET, Key=f"projects/{project_id}/README.md", Body=readme.read_bytes())
+            except Exception:
+                pass
+
     files_list = []
     for root, _, files in os.walk(str(p_dir)):
         for f in files:
@@ -424,9 +509,19 @@ def append_task_history(entry: dict):
     try:
         hist = []
         if TASK_HISTORY_FILE.exists():
-            hist = json.loads(TASK_HISTORY_FILE.read_text(encoding="utf-8"))
+            try:
+                hist = json.loads(TASK_HISTORY_FILE.read_text(encoding="utf-8"))
+            except Exception:
+                hist = []
         hist.insert(0, entry)
-        TASK_HISTORY_FILE.write_text(json.dumps(hist[:50], ensure_ascii=False, indent=2), encoding="utf-8")
+        hist_data = json.dumps(hist[:50], ensure_ascii=False, indent=2).encode("utf-8")
+        TASK_HISTORY_FILE.write_bytes(hist_data)
+        if s3_client:
+            try:
+                s3_client.put_object(Bucket=STORJ_BUCKET, Key="task_history.json", Body=hist_data)
+                s3_client.put_object(Bucket=STORJ_BUCKET, Key="workspace/task_history.json", Body=hist_data)
+            except Exception:
+                pass
     except Exception:
         pass
 
@@ -1026,6 +1121,16 @@ async def run_autonomous_task(req: TaskRequest):
         out_msg = term_res.get("stdout", "") or term_res.get("stderr", "") or "Команда выполнена."
         if term_res.get("offloaded"):
             out_msg = f"> ⚡ **Автоматически делегировано в Codespace:** {term_res.get('offload_reason')}\n> **Вычислительный узел:** {node_badge}\n\n```\n{out_msg}\n```"
+        
+        import datetime
+        append_task_history({
+            "task": task,
+            "time": datetime.datetime.now().strftime("%d.%m %H:%M"),
+            "engine": node_badge,
+            "project_id": req.project_id or "agent",
+            "success": term_res.get("exit_code") == 0
+        })
+
         return {
             "success": term_res.get("exit_code") == 0,
             "engine": node_badge,
@@ -1216,6 +1321,15 @@ async def run_autonomous_task(req: TaskRequest):
             if req.voice_mode:
                 voice_audio = await synthesize_speech_for_reply(explanation_str, req.voice or "ru-RU-DmitryNeural")
 
+            import datetime
+            append_task_history({
+                "task": task,
+                "time": datetime.datetime.now().strftime("%d.%m %H:%M"),
+                "engine": "Google Antigravity CLI (Google Pro)",
+                "project_id": req.project_id or "agent",
+                "success": (res.returncode == 0)
+            })
+
             return {
                 "success": (res.returncode == 0),
                 "engine": "Google Antigravity CLI (Google Pro)",
@@ -1346,6 +1460,15 @@ Return ONLY valid JSON.
             voice_audio = None
             if req.voice_mode:
                 voice_audio = await synthesize_speech_for_reply(expl, req.voice or "ru-RU-DmitryNeural")
+            import datetime
+            append_task_history({
+                "task": task,
+                "time": datetime.datetime.now().strftime("%d.%m %H:%M"),
+                "engine": f"Gemini 3.1 + {node_badge}",
+                "project_id": req.project_id or "agent",
+                "success": (res_returncode == 0)
+            })
+
             return {
                 "success": (res_returncode == 0),
                 "engine": f"Gemini 3.1 + {node_badge}",
@@ -1373,6 +1496,14 @@ Return ONLY valid JSON.
     if is_heavy:
         cs_res = await execute_in_codespace(task)
         node_badge = cs_res.get("node", "⚡ GitHub Codespaces (8 GB RAM, 2 CPU)")
+        import datetime
+        append_task_history({
+            "task": task,
+            "time": datetime.datetime.now().strftime("%d.%m %H:%M"),
+            "engine": node_badge,
+            "project_id": req.project_id or "agent",
+            "success": cs_res.get("success", False)
+        })
         return {
             "success": cs_res.get("success", False),
             "engine": node_badge,
@@ -1384,6 +1515,14 @@ Return ONLY valid JSON.
         }
 
     res = subprocess.run(task, shell=True, cwd=str(WORKSPACE_DIR), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=90)
+    import datetime
+    append_task_history({
+        "task": task,
+        "time": datetime.datetime.now().strftime("%d.%m %H:%M"),
+        "engine": "Render Cloud Node (512 MB RAM)",
+        "project_id": req.project_id or "agent",
+        "success": (res.returncode == 0)
+    })
     return {
         "success": (res.returncode == 0),
         "explanation": "Executed directly via system shell.",
