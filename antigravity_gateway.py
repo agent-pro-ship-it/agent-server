@@ -18,6 +18,12 @@ logger = logging.getLogger("AntigravityGateway")
 
 router = APIRouter(prefix="/v1", tags=["Antigravity API Gateway"])
 
+from dotenv import load_dotenv
+load_dotenv()
+
+FALLBACK_THOUGHT_SIGNATURE = "EnMKcQFpFH0THGK4maCY0L0/hcIL8KCaU7AvaZucmekD54tt6ei57DUe7QUcDSdoxvHo/nT0AyiEZpTtyUxpO8hdpGRQnV6DnROv0ll7eS+cCFYmSxDcelly7P6ITpkz/NX5eJS4TeDhRdKfhgOopt/asQ/D"
+THOUGHT_SIG_CACHE: Dict[str, str] = {}
+
 # Master Token configuration
 ANTIGRAVITY_MASTER_KEY = os.getenv("ANTIGRAVITY_MASTER_KEY", "sk-antigravity-master-roman")
 
@@ -29,8 +35,9 @@ OAUTH_REFRESH_TOKEN = os.getenv("ANTIGRAVITY_REFRESH_TOKEN", "")
 CASCADE_MODELS = [
     os.getenv("GEMINI_MODEL", "gemini-3.8-flash"),
     "gemini-3.5-flash",
+    "gemini-3.1-pro-preview",
     "gemini-3.1-flash-lite",
-    "gemini-2.5-flash"
+    "gemini-3-flash-preview"
 ]
 
 SSL_CTX = ssl.create_default_context()
@@ -136,11 +143,15 @@ def convert_anthropic_to_gemini(req_data: dict) -> dict:
                     if txt:
                         parts.append({"text": txt})
                 elif b_type == "tool_use":
+                    call_id = block.get("id")
+                    fn_name = block.get("name")
+                    sig = THOUGHT_SIG_CACHE.get(call_id) or THOUGHT_SIG_CACHE.get(fn_name) or FALLBACK_THOUGHT_SIGNATURE
                     parts.append({
                         "functionCall": {
-                            "name": block.get("name"),
+                            "name": fn_name,
                             "args": block.get("input") or {}
-                        }
+                        },
+                        "thoughtSignature": sig
                     })
                 elif b_type == "tool_result":
                     res_content = block.get("content", "")
@@ -193,31 +204,113 @@ def convert_anthropic_to_gemini(req_data: dict) -> dict:
                 })
         if declarations:
             payload["tools"] = [{"functionDeclarations": declarations}]
+            tc = req_data.get("tool_choice") or {}
+            tc_type = tc.get("type", "auto") if isinstance(tc, dict) else "auto"
+            if tc_type == "any":
+                payload["toolConfig"] = {"functionCallingConfig": {"mode": "ANY"}}
+            elif tc_type == "tool" and tc.get("name"):
+                payload["toolConfig"] = {"functionCallingConfig": {"mode": "ANY", "allowedFunctionNames": [tc.get("name")]}}
+            else:
+                payload["toolConfig"] = {"functionCallingConfig": {"mode": "AUTO"}}
 
     return payload
 
 
 def convert_openai_to_gemini(req_data: dict) -> dict:
+    raw_tools = req_data.get("tools") or []
+    if not raw_tools and "functions" in req_data:
+        raw_tools = [{"type": "function", "function": f} for f in req_data["functions"]]
+
+    declarations = []
+    for t in raw_tools:
+        fn = t.get("function") if (isinstance(t, dict) and t.get("type") == "function") else t
+        if isinstance(fn, dict) and fn.get("name"):
+            declarations.append({
+                "name": fn.get("name"),
+                "description": fn.get("description", ""),
+                "parameters": fn.get("parameters") or {"type": "object", "properties": {}}
+            })
+
     messages = req_data.get("messages", [])
     raw_contents = []
     system_text = ""
 
     for msg in messages:
         role = msg.get("role")
-        content = msg.get("content", "")
+        content = msg.get("content")
+
         if role == "system":
-            system_text += f"\n{content}"
+            if isinstance(content, str):
+                system_text += f"\n{content}"
+            elif isinstance(content, list):
+                for part in content:
+                    if isinstance(part, dict) and part.get("text"):
+                        system_text += f"\n{part.get('text')}"
             continue
-        g_role = "user" if role == "user" else "model"
-        parts = []
-        if isinstance(content, str) and content.strip():
-            parts.append({"text": content})
-        elif isinstance(content, list):
-            for part in content:
-                if isinstance(part, dict) and part.get("type") == "text":
-                    parts.append({"text": part.get("text", "")})
-        if parts:
-            raw_contents.append({"role": g_role, "parts": parts})
+
+        if role == "user":
+            parts = []
+            if isinstance(content, str) and content.strip():
+                parts.append({"text": content})
+            elif isinstance(content, list):
+                for part in content:
+                    if isinstance(part, dict) and part.get("type") == "text":
+                        parts.append({"text": part.get("text", "")})
+            if parts:
+                raw_contents.append({"role": "user", "parts": parts})
+
+        elif role == "assistant":
+            parts = []
+            if isinstance(content, str) and content.strip():
+                parts.append({"text": content})
+            tool_calls = msg.get("tool_calls") or []
+            for tc in tool_calls:
+                fn = tc.get("function", {})
+                fn_name = fn.get("name")
+                args_raw = fn.get("arguments", {})
+                if isinstance(args_raw, str):
+                    try:
+                        args = json.loads(args_raw)
+                    except Exception:
+                        args = {"raw": args_raw}
+                elif isinstance(args_raw, dict):
+                    args = args_raw
+                else:
+                    args = {}
+
+                tc_id = tc.get("id")
+                sig = THOUGHT_SIG_CACHE.get(tc_id) or THOUGHT_SIG_CACHE.get(fn_name) or FALLBACK_THOUGHT_SIGNATURE
+                parts.append({
+                    "functionCall": {
+                        "name": fn_name,
+                        "args": args
+                    },
+                    "thoughtSignature": sig
+                })
+            if parts:
+                raw_contents.append({"role": "model", "parts": parts})
+
+        elif role in ("tool", "function"):
+            name = msg.get("name")
+            if not name:
+                name = "tool"
+            content_str = str(content) if content is not None else ""
+            try:
+                content_obj = json.loads(content_str)
+                if not isinstance(content_obj, dict):
+                    content_obj = {"result": content_obj}
+            except Exception:
+                content_obj = {"result": content_str}
+
+            raw_contents.append({
+                "role": "user",
+                "parts": [{
+                    "functionResponse": {
+                        "name": name,
+                        "response": content_obj
+                    }
+                }]
+            })
 
     sanitized_contents = []
     last_role = None
@@ -234,10 +327,33 @@ def convert_openai_to_gemini(req_data: dict) -> dict:
     payload = {"contents": sanitized_contents}
     if system_text.strip():
         payload["systemInstruction"] = {"parts": [{"text": system_text.strip()}]}
+
+    if declarations:
+        payload["tools"] = [{"functionDeclarations": declarations}]
+        raw_tc = req_data.get("tool_choice") or "auto"
+        if isinstance(raw_tc, str):
+            mode_map = {
+                "auto": "AUTO",
+                "none": "NONE",
+                "required": "ANY",
+                "any": "ANY"
+            }
+            payload["toolConfig"] = {
+                "functionCallingConfig": {
+                    "mode": mode_map.get(raw_tc.lower(), "AUTO")
+                }
+            }
+        elif isinstance(raw_tc, dict):
+            target_fn = raw_tc.get("function", {}).get("name") or raw_tc.get("name")
+            cfg = {"mode": "ANY"}
+            if target_fn:
+                cfg["allowedFunctionNames"] = [target_fn]
+            payload["toolConfig"] = {"functionCallingConfig": cfg}
+
     return payload
 
 
-def call_gemini_backend(gemini_payload: dict):
+def call_gemini_backend(gemini_payload: dict, requested_model: Optional[str] = None):
     last_error = None
     access_token = None
     try:
@@ -247,7 +363,13 @@ def call_gemini_backend(gemini_payload: dict):
 
     api_key = os.getenv("GEMINI_API_KEY", "")
 
-    for model_name in CASCADE_MODELS:
+    models_to_try = list(CASCADE_MODELS)
+    if requested_model and "pro" in requested_model.lower():
+        if "gemini-3.1-pro-preview" in models_to_try:
+            models_to_try.remove("gemini-3.1-pro-preview")
+            models_to_try.insert(0, "gemini-3.1-pro-preview")
+
+    for model_name in models_to_try:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
         headers = {"Content-Type": "application/json"}
         if api_key:
@@ -303,7 +425,7 @@ async def anthropic_messages(request: Request):
     msg_id = f"msg_{uuid.uuid4().hex[:24]}"
 
     gemini_payload = convert_anthropic_to_gemini(req_data)
-    gemini_resp, used_model = await asyncio.to_thread(call_gemini_backend, gemini_payload)
+    gemini_resp, used_model = await asyncio.to_thread(call_gemini_backend, gemini_payload, requested_model)
 
     anthropic_content = []
     has_tool_call = False
@@ -311,17 +433,22 @@ async def anthropic_messages(request: Request):
     if candidates:
         candidate_parts = candidates[0].get("content", {}).get("parts", [])
         for part in candidate_parts:
+            tsig = part.get("thoughtSignature")
             if "text" in part:
                 anthropic_content.append({"type": "text", "text": part["text"]})
             elif "functionCall" in part:
                 has_tool_call = True
                 fn = part["functionCall"]
+                call_id = f"toolu_{uuid.uuid4().hex[:20]}"
                 anthropic_content.append({
                     "type": "tool_use",
-                    "id": f"toolu_{uuid.uuid4().hex[:20]}",
+                    "id": call_id,
                     "name": fn.get("name"),
                     "input": fn.get("args", {})
                 })
+                if tsig:
+                    THOUGHT_SIG_CACHE[call_id] = tsig
+                    THOUGHT_SIG_CACHE[fn.get("name")] = tsig
 
     if not anthropic_content:
         anthropic_content.append({"type": "text", "text": "OK"})
@@ -331,7 +458,7 @@ async def anthropic_messages(request: Request):
     if stream:
         async def event_generator():
             def sse(event_name, data_obj):
-                return f"event: {event_name}\ndata: {json.dumps(data_obj)}\n\n"
+                return f"event: {event_name}\ndata: {json.dumps(data_obj, ensure_ascii=False)}\n\n"
 
             yield sse("message_start", {
                 "type": "message_start",
@@ -380,7 +507,7 @@ async def anthropic_messages(request: Request):
                         "index": idx,
                         "delta": {
                             "type": "input_json_delta",
-                            "partial_json": json.dumps(block["input"])
+                            "partial_json": json.dumps(block["input"], ensure_ascii=False)
                         }
                     })
                     yield sse("content_block_stop", {
@@ -401,7 +528,7 @@ async def anthropic_messages(request: Request):
 
         return StreamingResponse(
             event_generator(),
-            media_type="text/event-stream",
+            media_type="text/event-stream; charset=utf-8",
             headers={
                 "Cache-Control": "no-cache",
                 "Connection": "close",
@@ -433,17 +560,41 @@ async def openai_chat_completions(request: Request):
     created_ts = int(time.time())
 
     gemini_payload = convert_openai_to_gemini(req_data)
-    gemini_resp, used_model = await asyncio.to_thread(call_gemini_backend, gemini_payload)
+    gemini_resp, used_model = await asyncio.to_thread(call_gemini_backend, gemini_payload, requested_model)
 
     reply_text = ""
+    tool_calls = []
     candidates = gemini_resp.get("candidates", [])
     if candidates:
         parts = candidates[0].get("content", {}).get("parts", [])
         for p in parts:
-            if "text" in p:
+            tsig = p.get("thoughtSignature")
+            if "text" in p and p["text"]:
                 reply_text += p["text"]
+            elif "functionCall" in p:
+                fc = p["functionCall"]
+                fn_name = fc.get("name", "")
+                fn_args = fc.get("args", {})
+                call_id = fc.get("id") or f"call_{uuid.uuid4().hex[:20]}"
 
-    if not reply_text:
+                if isinstance(fn_args, str):
+                    args_json_str = fn_args
+                else:
+                    args_json_str = json.dumps(fn_args, ensure_ascii=False)
+
+                tool_calls.append({
+                    "id": call_id,
+                    "type": "function",
+                    "function": {
+                        "name": fn_name,
+                        "arguments": args_json_str
+                    }
+                })
+                if tsig:
+                    THOUGHT_SIG_CACHE[call_id] = tsig
+                    THOUGHT_SIG_CACHE[fn_name] = tsig
+
+    if not reply_text and not tool_calls:
         reply_text = "OK"
 
     if stream:
@@ -459,21 +610,68 @@ async def openai_chat_completions(request: Request):
                     "finish_reason": None
                 }]
             }
-            yield f"data: {json.dumps(chunk_header)}\n\n"
+            yield f"data: {json.dumps(chunk_header, ensure_ascii=False)}\n\n"
 
-            chunk_content = {
-                "id": chat_id,
-                "object": "chat.completion.chunk",
-                "created": created_ts,
-                "model": requested_model,
-                "choices": [{
-                    "index": 0,
-                    "delta": {"content": reply_text},
-                    "finish_reason": None
-                }]
-            }
-            yield f"data: {json.dumps(chunk_content)}\n\n"
+            if reply_text:
+                chunk_content = {
+                    "id": chat_id,
+                    "object": "chat.completion.chunk",
+                    "created": created_ts,
+                    "model": requested_model,
+                    "choices": [{
+                        "index": 0,
+                        "delta": {"content": reply_text},
+                        "finish_reason": None
+                    }]
+                }
+                yield f"data: {json.dumps(chunk_content, ensure_ascii=False)}\n\n"
 
+            if tool_calls:
+                for idx, tc in enumerate(tool_calls):
+                    chunk_tc_start = {
+                        "id": chat_id,
+                        "object": "chat.completion.chunk",
+                        "created": created_ts,
+                        "model": requested_model,
+                        "choices": [{
+                            "index": 0,
+                            "delta": {
+                                "tool_calls": [{
+                                    "index": idx,
+                                    "id": tc["id"],
+                                    "type": "function",
+                                    "function": {
+                                        "name": tc["function"]["name"],
+                                        "arguments": ""
+                                    }
+                                }]
+                            },
+                            "finish_reason": None
+                        }]
+                    }
+                    yield f"data: {json.dumps(chunk_tc_start, ensure_ascii=False)}\n\n"
+
+                    chunk_tc_args = {
+                        "id": chat_id,
+                        "object": "chat.completion.chunk",
+                        "created": created_ts,
+                        "model": requested_model,
+                        "choices": [{
+                            "index": 0,
+                            "delta": {
+                                "tool_calls": [{
+                                    "index": idx,
+                                    "function": {
+                                        "arguments": tc["function"]["arguments"]
+                                    }
+                                }]
+                            },
+                            "finish_reason": None
+                        }]
+                    }
+                    yield f"data: {json.dumps(chunk_tc_args, ensure_ascii=False)}\n\n"
+
+            finish_reason = "tool_calls" if tool_calls else "stop"
             chunk_stop = {
                 "id": chat_id,
                 "object": "chat.completion.chunk",
@@ -482,17 +680,25 @@ async def openai_chat_completions(request: Request):
                 "choices": [{
                     "index": 0,
                     "delta": {},
-                    "finish_reason": "stop"
+                    "finish_reason": finish_reason
                 }]
             }
-            yield f"data: {json.dumps(chunk_stop)}\n\n"
+            yield f"data: {json.dumps(chunk_stop, ensure_ascii=False)}\n\n"
             yield "data: [DONE]\n\n"
 
         return StreamingResponse(
             openai_sse(),
-            media_type="text/event-stream",
+            media_type="text/event-stream; charset=utf-8",
             headers={"Cache-Control": "no-cache", "Connection": "close"}
         )
+
+    finish_reason = "tool_calls" if tool_calls else "stop"
+    msg_obj = {
+        "role": "assistant",
+        "content": reply_text if reply_text else None
+    }
+    if tool_calls:
+        msg_obj["tool_calls"] = tool_calls
 
     return {
         "id": chat_id,
@@ -501,11 +707,8 @@ async def openai_chat_completions(request: Request):
         "model": requested_model,
         "choices": [{
             "index": 0,
-            "message": {
-                "role": "assistant",
-                "content": reply_text
-            },
-            "finish_reason": "stop"
+            "message": msg_obj,
+            "finish_reason": finish_reason
         }],
         "usage": {
             "prompt_tokens": 50,
