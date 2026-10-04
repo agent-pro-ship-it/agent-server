@@ -32,6 +32,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+from antigravity_gateway import router as antigravity_v1_router
+app.include_router(antigravity_v1_router)
+
 BASE_DIR = Path(__file__).resolve().parent
 WORKSPACE_DIR = BASE_DIR / "workspace"
 WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
