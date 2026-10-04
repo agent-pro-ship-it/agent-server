@@ -12,11 +12,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     ca-certificates \
     procps \
+    openssh-client \
     && rm -rf /var/lib/apt/lists/*
 
 # Install ttyd web terminal for remote shell access
 RUN curl -fsSL https://github.com/tsl0922/ttyd/releases/download/1.7.7/ttyd.x86_64 -o /usr/local/bin/ttyd && \
     chmod +x /usr/local/bin/ttyd
+
+# Install GitHub CLI (gh) for autonomous Codespaces orchestration
+RUN curl -fsSL https://github.com/cli/cli/releases/download/v2.58.0/gh_2.58.0_linux_amd64.tar.gz | tar -xz -C /tmp && \
+    mv /tmp/gh_2.58.0_linux_amd64/bin/gh /usr/local/bin/gh && \
+    chmod +x /usr/local/bin/gh && \
+    rm -rf /tmp/gh_2.58.0_linux_amd64
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt

@@ -69,6 +69,8 @@ try:
 except Exception as e:
     logger.warning(f"AccountManager initialization notice: {e}")
 
+from codespaces_orchestrator import is_heavy_task, execute_in_codespace
+
 class TaskRequest(BaseModel):
     task: str
     gemini_key: Optional[str] = None
@@ -787,9 +789,22 @@ def api_gemini_summarize_task(req: SummarizeTaskRequest):
     return {"success": True, "prompt": f"Реализуй проект на основе идеи: {last_user_msg}", "model": "fallback"}
 
 @app.post("/api/terminal")
-def execute_command(req: CommandRequest):
-    """Executes bash commands directly on the server."""
+async def execute_command(req: CommandRequest):
+    """Executes bash commands directly on the server or offloads to Codespaces if heavy."""
     cmd = req.command.strip()
+    is_heavy, reason = is_heavy_task(cmd)
+    if is_heavy:
+        logger.info(f"⚡ Autonomous Offload: delegating heavy command to GitHub Codespaces (8GB RAM): {cmd} ({reason})")
+        cs_res = await execute_in_codespace(cmd)
+        return {
+            "exit_code": cs_res.get("exit_code", 0 if cs_res.get("success") else 1),
+            "stdout": cs_res.get("stdout", ""),
+            "stderr": cs_res.get("stderr", ""),
+            "node": cs_res.get("node", "⚡ GitHub Codespaces (8 GB RAM, 2 CPU)"),
+            "offloaded": True,
+            "offload_reason": reason
+        }
+
     target_dir = WORKSPACE_DIR
     if req.project_id:
         target_dir = WORKSPACE_DIR / req.project_id.strip()
@@ -807,12 +822,15 @@ def execute_command(req: CommandRequest):
         return {
             "exit_code": res.returncode,
             "stdout": res.stdout,
-            "stderr": res.stderr
+            "stderr": res.stderr,
+            "node": "Render Cloud Node (512 MB RAM)",
+            "offloaded": False
         }
     except subprocess.TimeoutExpired:
-        return {"exit_code": -1, "stdout": "", "stderr": "Error: Command timed out after 120 seconds."}
+        return {"exit_code": -1, "stdout": "", "stderr": "Error: Command timed out after 120 seconds.", "node": "Render Cloud Node (512 MB RAM)", "offloaded": False}
     except Exception as e:
-        return {"exit_code": 1, "stdout": "", "stderr": str(e)}
+        return {"exit_code": 1, "stdout": "", "stderr": str(e), "node": "Render Cloud Node (512 MB RAM)", "offloaded": False}
+
 
 class BrowserNavigateRequest(BaseModel):
     url: str
@@ -1003,7 +1021,21 @@ async def run_autonomous_task(req: TaskRequest):
     # If it's a direct terminal command
     if task.startswith("$ ") or task.startswith("bash:"):
         cmd = task.replace("bash:", "").replace("$ ", "").strip()
-        return execute_command(CommandRequest(command=cmd, project_id=req.project_id))
+        term_res = await execute_command(CommandRequest(command=cmd, project_id=req.project_id))
+        node_badge = term_res.get("node", "Render Cloud Node (512 MB RAM)")
+        out_msg = term_res.get("stdout", "") or term_res.get("stderr", "") or "Команда выполнена."
+        if term_res.get("offloaded"):
+            out_msg = f"> ⚡ **Автоматически делегировано в Codespace:** {term_res.get('offload_reason')}\n> **Вычислительный узел:** {node_badge}\n\n```\n{out_msg}\n```"
+        return {
+            "success": term_res.get("exit_code") == 0,
+            "engine": node_badge,
+            "explanation": out_msg,
+            "stdout": term_res.get("stdout", ""),
+            "stderr": term_res.get("stderr", ""),
+            "exit_code": term_res.get("exit_code", 0),
+            "node": node_badge
+        }
+
 
     # Direct browser open requests (e.g., "Ты можешь открыть браузер сейчас?")
     lower_task = task.lower()
@@ -1110,7 +1142,10 @@ async def run_autonomous_task(req: TaskRequest):
             if bg_action:
                 act_type, act_val = bg_action
                 if act_type == "EXEC_COMMAND":
-                    asyncio.create_task(asyncio.to_thread(subprocess.run, act_val, shell=True, cwd=str(target_dir)))
+                    if is_heavy_task(act_val)[0]:
+                        asyncio.create_task(execute_in_codespace(act_val))
+                    else:
+                        asyncio.create_task(asyncio.to_thread(subprocess.run, act_val, shell=True, cwd=str(target_dir)))
                 else:
                     asyncio.create_task(asyncio.to_thread(subprocess.run, ["agy", "--dangerously-skip-permissions", "-p", act_val], cwd=str(target_dir)))
 
@@ -1265,15 +1300,30 @@ Return ONLY valid JSON.
                 data = json.loads(raw_clean)
 
             script = data.get("script", "")
-            res = subprocess.run(
-                script,
-                shell=True,
-                cwd=str(WORKSPACE_DIR),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                timeout=180
-            )
+            is_heavy, heavy_reason = is_heavy_task(task, script)
+            if is_heavy:
+                logger.info(f"⚡ Autonomous Offload: delegating heavy script to GitHub Codespaces (8GB RAM): {heavy_reason}")
+                cs_res = await execute_in_codespace(script)
+                res_returncode = cs_res.get("exit_code", 0 if cs_res.get("success") else 1)
+                res_stdout = cs_res.get("stdout", "")
+                res_stderr = cs_res.get("stderr", "")
+                node_badge = cs_res.get("node", "⚡ GitHub Codespaces (8 GB RAM, 2 CPU)")
+                offloaded = True
+            else:
+                res = subprocess.run(
+                    script,
+                    shell=True,
+                    cwd=str(WORKSPACE_DIR),
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    timeout=180
+                )
+                res_returncode = res.returncode
+                res_stdout = res.stdout
+                res_stderr = res.stderr
+                node_badge = "Render Cloud Node (512 MB RAM)"
+                offloaded = False
 
             # Automatically upload created files to Storj 25GB S3
             synced_to_cloud = []
@@ -1289,24 +1339,28 @@ Return ONLY valid JSON.
                             logger.warning(f"Failed to sync {rel_name} to Storj: {up_err}")
 
             expl = data.get("explanation") or "Задача выполнена."
-            cmd_stdout = res.stdout if (res.stdout and res.stdout.strip() != expl.strip()) else ""
+            if offloaded:
+                expl += f"\n\n> ⚡ **Автоматически делегировано:** {heavy_reason}\n> **Вычислительный узел:** {node_badge}"
+
+            cmd_stdout = res_stdout if (res_stdout and res_stdout.strip() != expl.strip()) else ""
             voice_audio = None
             if req.voice_mode:
                 voice_audio = await synthesize_speech_for_reply(expl, req.voice or "ru-RU-DmitryNeural")
             return {
-                "success": (res.returncode == 0),
-                "engine": "Gemini 3.1 Autonomous Engine",
+                "success": (res_returncode == 0),
+                "engine": f"Gemini 3.1 + {node_badge}",
+                "node": node_badge,
                 "explanation": expl,
                 "voice_audio_base64": voice_audio,
                 "stdout": cmd_stdout,
-                "terminal_log": (res.stdout or "") + ("\n" + res.stderr if res.stderr else ""),
-                "stderr": res.stderr,
-                "exit_code": res.returncode,
+                "terminal_log": (res_stdout or "") + ("\n" + res_stderr if res_stderr else ""),
+                "stderr": res_stderr,
+                "exit_code": res_returncode,
                 "files_created": data.get("files_created", []),
                 "cloud_synced_files": synced_to_cloud,
                 "steps": [
                     {"icon": "💭", "title": "Формирование плана действий", "status": "done"},
-                    {"icon": "⚡", "title": "Выполнение сценария в контейнере", "status": "done"},
+                    {"icon": "⚡", "title": f"Выполнение на узле {node_badge}", "status": "done"},
                     {"icon": "📁", "title": f"Создано/обновлено файлов: {len(data.get('files_created', []))}", "status": "done"} if data.get("files_created") else {"icon": "✓", "title": "Задача завершена", "status": "done"}
                 ]
             }
@@ -1315,13 +1369,28 @@ Return ONLY valid JSON.
             return {"success": False, "error": f"AI Engine error: {str(e)}"}
 
     # Default fallback: direct shell execution
+    is_heavy, heavy_reason = is_heavy_task(task)
+    if is_heavy:
+        cs_res = await execute_in_codespace(task)
+        node_badge = cs_res.get("node", "⚡ GitHub Codespaces (8 GB RAM, 2 CPU)")
+        return {
+            "success": cs_res.get("success", False),
+            "engine": node_badge,
+            "explanation": f"> ⚡ **Автоматически делегировано в Codespace:** {heavy_reason}\n> **Вычислительный узел:** {node_badge}",
+            "stdout": cs_res.get("stdout", ""),
+            "stderr": cs_res.get("stderr", ""),
+            "exit_code": cs_res.get("exit_code", 0),
+            "node": node_badge
+        }
+
     res = subprocess.run(task, shell=True, cwd=str(WORKSPACE_DIR), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=90)
     return {
         "success": (res.returncode == 0),
         "explanation": "Executed directly via system shell.",
         "stdout": res.stdout,
         "stderr": res.stderr,
-        "exit_code": res.returncode
+        "exit_code": res.returncode,
+        "node": "Render Cloud Node (512 MB RAM)"
     }
 
 @app.get("/api/files")
