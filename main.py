@@ -2040,6 +2040,7 @@ async def cloud_browser_websocket(websocket: WebSocket):
             "--disable-setuid-sandbox",
             "--no-first-run",
             "--no-default-browser-check",
+            "--disable-blink-features=AutomationControlled",
             "--window-size=1280,800"
         ]
 
@@ -2048,9 +2049,21 @@ async def cloud_browser_websocket(websocket: WebSocket):
             executable_path=exe,
             headless=True,
             args=launch_args,
+            ignore_default_args=["--enable-automation"],
             viewport={"width": 1280, "height": 800},
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
         )
+        await browser_context.add_init_script("""
+            Object.defineProperty(navigator, 'webdriver', {
+                get: () => undefined
+            });
+            window.chrome = {
+                runtime: {},
+                loadTimes: function() {},
+                csi: function() {},
+                app: {}
+            };
+        """)
 
         page = browser_context.pages[0] if browser_context.pages else await browser_context.new_page()
         active_cloud_browser["context"] = browser_context

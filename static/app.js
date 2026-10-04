@@ -1451,9 +1451,19 @@ function connectBrowserStream(initialUrl = null) {
         if (data.url && browserUrlInput && document.activeElement !== browserUrlInput) {
           browserUrlInput.value = data.url;
         }
+        if (data.url && (data.url.includes("accounts.google.com") || data.url.includes("signin/rejected"))) {
+          if (browserSecurityBanner) browserSecurityBanner.style.display = "flex";
+        } else {
+          if (browserSecurityBanner) browserSecurityBanner.style.display = "none";
+        }
       } else if (data.type === "navigated") {
         if (data.url && browserUrlInput && document.activeElement !== browserUrlInput) {
           browserUrlInput.value = data.url;
+        }
+        if (data.url && (data.url.includes("accounts.google.com") || data.url.includes("signin/rejected"))) {
+          if (browserSecurityBanner) browserSecurityBanner.style.display = "flex";
+        } else {
+          if (browserSecurityBanner) browserSecurityBanner.style.display = "none";
         }
       } else if (data.type === "error") {
         if (browserStatusText) browserStatusText.innerText = `Ошибка: ${data.message}`;
@@ -1528,7 +1538,10 @@ window.addEventListener("keydown", (e) => {
 });
 
 function openSecureAuthPopup(rawUrl = null) {
-  const targetUrl = rawUrl || (browserUrlInput ? browserUrlInput.value : "") || "https://accounts.google.com";
+  let targetUrl = rawUrl || (browserUrlInput ? browserUrlInput.value : "") || "https://accounts.google.com";
+  if (targetUrl.includes("signin/rejected") || targetUrl.includes("rejected?")) {
+    targetUrl = "https://accounts.google.com";
+  }
   const w = 620;
   const h = 720;
   const left = Math.max(0, Math.round((window.screen.width - w) / 2));
@@ -1620,7 +1633,10 @@ if (btnBrowserReload) {
 
 if (btnBrowserExternal) {
   btnBrowserExternal.addEventListener("click", () => {
-    const u = (browserUrlInput && browserUrlInput.value) || "https://www.google.com";
+    let u = (browserUrlInput && browserUrlInput.value) || "https://www.google.com";
+    if (u.includes("signin/rejected") || u.includes("rejected?")) {
+      u = "https://accounts.google.com";
+    }
     window.open(u, "_blank");
   });
 }
@@ -1629,7 +1645,11 @@ if (btnBrowserExternal) {
 document.querySelectorAll(".quick-link-chip").forEach(chip => {
   chip.addEventListener("click", () => {
     const targetUrl = chip.getAttribute("data-url");
-    if (targetUrl) navigateToBrowserUrl(targetUrl);
+    if (targetUrl === "https://accounts.google.com") {
+      openSecureAuthPopup("https://accounts.google.com");
+    } else if (targetUrl) {
+      navigateToBrowserUrl(targetUrl);
+    }
   });
 });
 
