@@ -89,8 +89,7 @@ def restore_workspace_from_storj():
                 else:
                     local_target = WORKSPACE_DIR / key
 
-                if key.endswith("projects.json") and local_target.exists():
-                    continue
+
 
                 if not local_target.exists() or local_target.stat().st_size != obj.get("Size", 0):
                     try:
@@ -148,7 +147,7 @@ def sanitize_projects(projs: list) -> list:
     for p in projs:
         p_id = p.get("id", "")
         p_name = p.get("name", "")
-        if not p_name or "" in p_name or set(p_name.strip()) == {"?"}:
+        if not p_name or "\ufffd" in p_name or "?" in p_name or set(p_name.strip()) == {"?"}:
             if p_id in defaults_by_id:
                 p["name"] = defaults_by_id[p_id]["name"]
                 p["task"] = defaults_by_id[p_id]["task"]
