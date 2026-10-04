@@ -1641,6 +1641,91 @@ if (btnBrowserExternal) {
   });
 }
 
+// Cookie Import Handlers
+const btnBrowserImportCookies = document.getElementById("btnBrowserImportCookies");
+const modalImportCookies = document.getElementById("modalImportCookies");
+const btnCloseImportCookies = document.getElementById("btnCloseImportCookies");
+const btnCancelImportCookies = document.getElementById("btnCancelImportCookies");
+const btnSubmitImportCookies = document.getElementById("btnSubmitImportCookies");
+const cookiesJsonInput = document.getElementById("cookiesJsonInput");
+const cookieImportStatus = document.getElementById("cookieImportStatus");
+
+if (btnBrowserImportCookies) {
+  btnBrowserImportCookies.addEventListener("click", () => {
+    if (cookieImportStatus) {
+      cookieImportStatus.style.display = "none";
+      cookieImportStatus.innerText = "";
+    }
+    if (modalImportCookies) modalImportCookies.classList.add("active");
+  });
+}
+
+function closeCookieModal() {
+  if (modalImportCookies) modalImportCookies.classList.remove("active");
+}
+if (btnCloseImportCookies) btnCloseImportCookies.addEventListener("click", closeCookieModal);
+if (btnCancelImportCookies) btnCancelImportCookies.addEventListener("click", closeCookieModal);
+
+if (btnSubmitImportCookies) {
+  btnSubmitImportCookies.addEventListener("click", async () => {
+    const raw = cookiesJsonInput ? cookiesJsonInput.value.trim() : "";
+    if (!raw) {
+      alert("Пожалуйста, вставьте JSON с cookies из Cookie-Editor");
+      return;
+    }
+    try {
+      JSON.parse(raw);
+    } catch(err) {
+      alert("Ошибка: вставленный текст не является валидным JSON. Скопируйте правильный экспорт из Cookie-Editor.");
+      return;
+    }
+
+    btnSubmitImportCookies.disabled = true;
+    btnSubmitImportCookies.innerText = "Сохранение...";
+    if (cookieImportStatus) {
+      cookieImportStatus.style.display = "block";
+      cookieImportStatus.style.color = "#2563eb";
+      cookieImportStatus.innerText = "Загрузка в облачный Chromium и синхронизация в Storj S3...";
+    }
+
+    try {
+      const res = await fetch(`${SERVER_URL}/api/browser/import-cookies`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          cookies: raw,
+          url: (browserUrlInput && browserUrlInput.value) || "https://www.google.com"
+        })
+      });
+      const data = await res.json();
+      if (data.success) {
+        if (cookieImportStatus) {
+          cookieImportStatus.style.color = "#16a34a";
+          cookieImportStatus.innerText = `✅ ${data.message}`;
+        }
+        setTimeout(() => {
+          closeCookieModal();
+          if (cookiesJsonInput) cookiesJsonInput.value = "";
+          if (btnBrowserReload) btnBrowserReload.click();
+        }, 1500);
+      } else {
+        if (cookieImportStatus) {
+          cookieImportStatus.style.color = "#dc2626";
+          cookieImportStatus.innerText = `❌ Ошибка: ${data.error}`;
+        }
+      }
+    } catch(e) {
+      if (cookieImportStatus) {
+        cookieImportStatus.style.color = "#dc2626";
+        cookieImportStatus.innerText = `❌ Ошибка соединения: ${e.message}`;
+      }
+    } finally {
+      btnSubmitImportCookies.disabled = false;
+      btnSubmitImportCookies.innerText = "Сохранить в Storj S3 ⚡";
+    }
+  });
+}
+
 // Browser Quick Link Chips
 document.querySelectorAll(".quick-link-chip").forEach(chip => {
   chip.addEventListener("click", () => {

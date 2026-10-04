@@ -978,6 +978,79 @@ async def api_browser_navigate(req: BrowserNavigateRequest):
         except Exception as e2:
             return {"success": False, "error": f"Browser error: {e} / {e2}"}
 
+class CookieImportRequest(BaseModel):
+    cookies: Any
+    url: Optional[str] = "https://www.google.com"
+
+@app.post("/api/browser/import-cookies")
+async def api_import_cookies(req: CookieImportRequest):
+    """Imports session cookies from user's personal browser and syncs them to Storj S3."""
+    try:
+        raw = req.cookies
+        if isinstance(raw, str):
+            raw = json.loads(raw)
+        if not isinstance(raw, list):
+            return {"success": False, "error": "Формат cookies должен быть списком объектов JSON."}
+        
+        valid_cookies = []
+        for c in raw:
+            if not isinstance(c, dict):
+                continue
+            name = c.get("name")
+            value = c.get("value")
+            domain = c.get("domain", "")
+            if not name or value is None:
+                continue
+            cookie_dict = {
+                "name": str(name),
+                "value": str(value),
+                "domain": str(domain) if domain else ".google.com",
+                "path": c.get("path", "/")
+            }
+            if "secure" in c:
+                cookie_dict["secure"] = bool(c["secure"])
+            if "httpOnly" in c:
+                cookie_dict["httpOnly"] = bool(c["httpOnly"])
+            same_site = str(c.get("sameSite", "")).lower()
+            if same_site in ["strict"]:
+                cookie_dict["sameSite"] = "Strict"
+            elif same_site in ["none", "no_restriction"]:
+                cookie_dict["sameSite"] = "None"
+            else:
+                cookie_dict["sameSite"] = "Lax"
+            valid_cookies.append(cookie_dict)
+
+        cookies_file = WORKSPACE_DIR / "browser_cookies.json"
+        cookies_file.write_text(json.dumps(valid_cookies, indent=2), encoding="utf-8")
+
+        if s3_client:
+            try:
+                s3_client.put_object(
+                    Bucket=STORJ_BUCKET,
+                    Key="browser_cookies.json",
+                    Body=cookies_file.read_bytes()
+                )
+                logger.info(f"Persisted {len(valid_cookies)} cookies to Storj S3.")
+            except Exception as se:
+                logger.warning(f"Notice syncing cookies to Storj S3: {se}")
+
+        if active_cloud_browser["context"]:
+            try:
+                await active_cloud_browser["context"].add_cookies(valid_cookies)
+                if active_cloud_browser["page"] and req.url:
+                    await active_cloud_browser["page"].goto(req.url)
+            except Exception as be:
+                logger.warning(f"Notice applying cookies to active browser: {be}")
+
+        return {
+            "success": True,
+            "count": len(valid_cookies),
+            "message": f"Успешно импортировано {len(valid_cookies)} cookies! Сессия сохранена в облаке Storj 25GB."
+        }
+    except Exception as e:
+        logger.error(f"Error importing cookies: {e}")
+        return {"success": False, "error": str(e)}
+
 @app.get("/api/browser/proxy")
 async def api_browser_proxy(url: str):
     """Secure proxy for in-app browser modal: strips X-Frame-Options & CSP so sites can render inside iframe."""
@@ -2064,6 +2137,16 @@ async def cloud_browser_websocket(websocket: WebSocket):
                 app: {}
             };
         """)
+
+        # Auto-load persisted cookies from Storj S3 / local disk
+        cookies_file = WORKSPACE_DIR / "browser_cookies.json"
+        if cookies_file.exists():
+            try:
+                saved_cookies = json.loads(cookies_file.read_text(encoding="utf-8"))
+                await browser_context.add_cookies(saved_cookies)
+                logger.info(f"Loaded {len(saved_cookies)} persisted cookies into cloud browser.")
+            except Exception as ce:
+                logger.warning(f"Notice loading persisted cookies: {ce}")
 
         page = browser_context.pages[0] if browser_context.pages else await browser_context.new_page()
         active_cloud_browser["context"] = browser_context
