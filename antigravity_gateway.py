@@ -4,6 +4,7 @@ import json
 import time
 import uuid
 import ssl
+import re
 import logging
 import asyncio
 import urllib.request
@@ -23,6 +24,90 @@ load_dotenv()
 
 FALLBACK_THOUGHT_SIGNATURE = "EnMKcQFpFH0THGK4maCY0L0/hcIL8KCaU7AvaZucmekD54tt6ei57DUe7QUcDSdoxvHo/nT0AyiEZpTtyUxpO8hdpGRQnV6DnROv0ll7eS+cCFYmSxDcelly7P6ITpkz/NX5eJS4TeDhRdKfhgOopt/asQ/D"
 THOUGHT_SIG_CACHE: Dict[str, str] = {}
+TOOL_CALL_NAME_CACHE: Dict[str, str] = {}
+
+
+def sanitize_parameters_schema(schema: Any, root_defs: Optional[dict] = None) -> dict:
+    if not isinstance(schema, dict):
+        return {"type": "object", "properties": {}}
+
+    if root_defs is None:
+        root_defs = {}
+        for d_key in ("definitions", "$defs", "defs"):
+            if d_key in schema and isinstance(schema[d_key], dict):
+                root_defs.update(schema[d_key])
+
+    cleaned = {}
+    for k, v in schema.items():
+        if k == "$ref" and isinstance(v, str):
+            ref_name = v.split("/")[-1]
+            if ref_name in root_defs:
+                resolved = sanitize_parameters_schema(root_defs[ref_name], root_defs)
+                cleaned.update(resolved)
+            else:
+                cleaned["type"] = "string"
+            continue
+
+        if k.startswith("$") or k in ("definitions", "defs"):
+            continue
+
+        if not k or not isinstance(k, str):
+            continue
+
+        if k == "type":
+            if isinstance(v, list):
+                non_null_types = [t for t in v if t != "null"]
+                cleaned["type"] = non_null_types[0] if non_null_types else "string"
+                if "null" in v:
+                    cleaned["nullable"] = True
+            elif isinstance(v, str):
+                cleaned["type"] = v
+            else:
+                cleaned["type"] = "string"
+            continue
+
+        if k == "properties" and isinstance(v, dict):
+            props = {}
+            for pk, pv in v.items():
+                if not pk or not isinstance(pk, str):
+                    continue
+                if isinstance(pv, dict):
+                    props[pk] = sanitize_parameters_schema(pv, root_defs)
+                else:
+                    props[pk] = {"type": "string"}
+            cleaned["properties"] = props
+            continue
+
+        if k == "items":
+            if isinstance(v, dict):
+                cleaned["items"] = sanitize_parameters_schema(v, root_defs)
+            elif isinstance(v, list) and v:
+                cleaned["items"] = sanitize_parameters_schema(v[0], root_defs)
+            else:
+                cleaned["items"] = {"type": "string"}
+            continue
+
+        if k in ("anyOf", "oneOf", "allOf") and isinstance(v, list):
+            cleaned[k] = [sanitize_parameters_schema(sub, root_defs) for sub in v if isinstance(sub, dict)]
+            continue
+
+        if isinstance(v, dict):
+            cleaned[k] = sanitize_parameters_schema(v, root_defs)
+        elif isinstance(v, list):
+            cleaned[k] = [sanitize_parameters_schema(x, root_defs) if isinstance(x, dict) else x for x in v]
+        else:
+            cleaned[k] = v
+
+    if "type" not in cleaned:
+        cleaned["type"] = "object"
+
+    if "required" in cleaned and isinstance(cleaned["required"], list):
+        props = cleaned.get("properties", {})
+        cleaned["required"] = [r for r in cleaned["required"] if r in props]
+        if not cleaned["required"]:
+            del cleaned["required"]
+
+    return cleaned
 
 # Master Token configuration
 ANTIGRAVITY_MASTER_KEY = os.getenv("ANTIGRAVITY_MASTER_KEY", "sk-antigravity-master-roman")
@@ -201,7 +286,7 @@ def convert_anthropic_to_gemini(req_data: dict) -> dict:
                 declarations.append({
                     "name": name,
                     "description": desc,
-                    "parameters": schema
+                    "parameters": sanitize_parameters_schema(schema)
                 })
         if declarations:
             payload["tools"] = [{"functionDeclarations": declarations}]
@@ -226,10 +311,11 @@ def convert_openai_to_gemini(req_data: dict) -> dict:
     for t in raw_tools:
         fn = t.get("function") if (isinstance(t, dict) and t.get("type") == "function") else t
         if isinstance(fn, dict) and fn.get("name"):
+            raw_params = fn.get("parameters") or {"type": "object", "properties": {}}
             declarations.append({
                 "name": fn.get("name"),
                 "description": fn.get("description", ""),
-                "parameters": fn.get("parameters") or {"type": "object", "properties": {}}
+                "parameters": sanitize_parameters_schema(raw_params)
             })
 
     messages = req_data.get("messages", [])
@@ -240,7 +326,7 @@ def convert_openai_to_gemini(req_data: dict) -> dict:
         role = msg.get("role")
         content = msg.get("content")
 
-        if role == "system":
+        if role in ("system", "developer"):
             if isinstance(content, str):
                 system_text += f"\n{content}"
             elif isinstance(content, list):
@@ -255,8 +341,25 @@ def convert_openai_to_gemini(req_data: dict) -> dict:
                 parts.append({"text": content})
             elif isinstance(content, list):
                 for part in content:
-                    if isinstance(part, dict) and part.get("type") == "text":
-                        parts.append({"text": part.get("text", "")})
+                    if isinstance(part, dict):
+                        p_type = part.get("type")
+                        if p_type == "text" and part.get("text"):
+                            parts.append({"text": part["text"]})
+                        elif p_type == "image_url":
+                            img_info = part.get("image_url", {})
+                            img_url = img_info.get("url", "")
+                            if img_url.startswith("data:"):
+                                try:
+                                    header, b64 = img_url.split(",", 1)
+                                    mime = header.split(";")[0].replace("data:", "")
+                                    parts.append({
+                                        "inlineData": {
+                                            "mimeType": mime,
+                                            "data": b64
+                                        }
+                                    })
+                                except Exception:
+                                    pass
             if parts:
                 raw_contents.append({"role": "user", "parts": parts})
 
@@ -280,6 +383,8 @@ def convert_openai_to_gemini(req_data: dict) -> dict:
                     args = {}
 
                 tc_id = tc.get("id")
+                if tc_id and fn_name:
+                    TOOL_CALL_NAME_CACHE[tc_id] = fn_name
                 sig = THOUGHT_SIG_CACHE.get(tc_id) or THOUGHT_SIG_CACHE.get(fn_name) or FALLBACK_THOUGHT_SIGNATURE
                 parts.append({
                     "functionCall": {
@@ -293,8 +398,20 @@ def convert_openai_to_gemini(req_data: dict) -> dict:
 
         elif role in ("tool", "function"):
             name = msg.get("name")
+            tool_call_id = msg.get("tool_call_id")
+            if not name and tool_call_id:
+                name = TOOL_CALL_NAME_CACHE.get(tool_call_id)
+                if not name:
+                    for prev_msg in messages:
+                        for prev_tc in (prev_msg.get("tool_calls") or []):
+                            if prev_tc.get("id") == tool_call_id:
+                                name = prev_tc.get("function", {}).get("name")
+                                break
+                        if name:
+                            break
             if not name:
                 name = "tool"
+
             content_str = str(content) if content is not None else ""
             try:
                 content_obj = json.loads(content_str)
@@ -658,7 +775,9 @@ def call_gemini_backend(gemini_payload: dict, requested_model: Optional[str] = N
             except Exception:
                 pass
             logger.warning(f"Antigravity model {model_name} HTTP {he.code}: {err_body[:200]}")
-            last_error = he
+            last_error = RuntimeError(f"HTTP {he.code} from {model_name}: {err_body[:300]}")
+            if he.code == 400:
+                raise last_error
             continue
         except Exception as e:
             logger.warning(f"Antigravity model {model_name} error: {e}")
@@ -875,17 +994,23 @@ async def openai_chat_completions(request: Request):
             logger.warning(f"Antigravity engine execution notice: {ag_err}")
 
     if not gemini_resp:
+        err_msg = "Unable to complete request with Antigravity Pro credentials"
+        status_code = 502
+        if 'primary_err' in locals() and primary_err:
+            err_msg = str(primary_err)
+            if hasattr(primary_err, 'code') and isinstance(primary_err.code, int):
+                status_code = primary_err.code
+        logger.error(f"Antigravity completions error: {err_msg}")
         return JSONResponse(
-            status_code=502,
+            status_code=status_code,
             content={
                 "error": {
-                    "message": "Antigravity Pro gateway error: unable to complete request with Antigravity Pro credentials",
+                    "message": f"Antigravity Pro gateway error: {err_msg}",
                     "type": "api_error",
-                    "code": "502"
+                    "code": str(status_code)
                 }
             }
         )
-
 
     reply_text = ""
     tool_calls = []
@@ -901,6 +1026,7 @@ async def openai_chat_completions(request: Request):
                 fn_name = fc.get("name", "")
                 fn_args = fc.get("args", {})
                 call_id = fc.get("id") or f"call_{uuid.uuid4().hex[:20]}"
+                TOOL_CALL_NAME_CACHE[call_id] = fn_name
 
                 if isinstance(fn_args, str):
                     args_json_str = fn_args
@@ -938,18 +1064,23 @@ async def openai_chat_completions(request: Request):
             yield f"data: {json.dumps(chunk_header, ensure_ascii=False)}\n\n"
 
             if reply_text:
-                chunk_content = {
-                    "id": chat_id,
-                    "object": "chat.completion.chunk",
-                    "created": created_ts,
-                    "model": requested_model,
-                    "choices": [{
-                        "index": 0,
-                        "delta": {"content": reply_text},
-                        "finish_reason": None
-                    }]
-                }
-                yield f"data: {json.dumps(chunk_content, ensure_ascii=False)}\n\n"
+                words = re.split(r'(\s+)', reply_text)
+                for w in words:
+                    if not w:
+                        continue
+                    chunk_content = {
+                        "id": chat_id,
+                        "object": "chat.completion.chunk",
+                        "created": created_ts,
+                        "model": requested_model,
+                        "choices": [{
+                            "index": 0,
+                            "delta": {"content": w},
+                            "finish_reason": None
+                        }]
+                    }
+                    yield f"data: {json.dumps(chunk_content, ensure_ascii=False)}\n\n"
+                    await asyncio.sleep(0.005)
 
             if tool_calls:
                 for idx, tc in enumerate(tool_calls):
