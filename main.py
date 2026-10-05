@@ -1750,16 +1750,22 @@ def git_sync(msg: str = Form("Autonomous Agent Workspace Sync")):
 
 @app.get("/api/antigravity/status")
 def antigravity_status():
-    """Checks Antigravity CLI installation and version."""
+    """Checks Antigravity CLI installation and executes diagnostic ping."""
+    import shutil
+    cmd = ["/usr/local/bin/language_server", "agentapi", "new-conversation", "--model=flash", "Ping"]
+    if not os.path.exists(cmd[0]):
+        cmd = ["agentapi", "new-conversation", "--model=flash", "Ping"]
     try:
-        res = subprocess.run(["agy", "--version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=10)
+        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=20)
         return {
-            "installed": (res.returncode == 0),
-            "version": res.stdout.strip() if res.returncode == 0 else "not_found",
-            "output": res.stdout.strip() or res.stderr.strip()
+            "installed": True,
+            "cmd": cmd,
+            "exit_code": res.returncode,
+            "stdout": res.stdout,
+            "stderr": res.stderr
         }
     except Exception as e:
-        return {"installed": False, "error": str(e)}
+        return {"installed": False, "cmd": cmd, "error": str(e)}
 
 active_auth_process = None
 
