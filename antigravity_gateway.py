@@ -354,6 +354,258 @@ def convert_openai_to_gemini(req_data: dict) -> dict:
     return payload
 
 
+def execute_via_antigravity_engine(req_data: dict, requested_model: str) -> Optional[dict]:
+    import shutil
+    import subprocess
+    import re
+    from pathlib import Path
+
+    agentapi_cmd = None
+    subcommand_prefix = []
+    candidates = [
+        ("/usr/local/bin/language_server", ["agentapi"]),
+        ("/usr/local/bin/agentapi", []),
+        (r"C:\Users\555\AppData\Local\Programs\antigravity\resources\bin\language_server.exe", ["agentapi"]),
+        (r"C:\Users\555\.gemini\antigravity\bin\agentapi.bat", []),
+        ("agentapi", []),
+        ("agy", [])
+    ]
+    for cand, prefix in candidates:
+        if Path(cand).exists() or shutil.which(cand):
+            agentapi_cmd = cand
+            subcommand_prefix = prefix
+            break
+
+    if not agentapi_cmd:
+        return None
+
+    messages = req_data.get("messages", [])
+    if not messages:
+        return None
+
+    system_text = ""
+    conversation_lines = []
+    
+    # Process tools and legacy functions
+    raw_tools = req_data.get("tools") or []
+    if not raw_tools and "functions" in req_data:
+        raw_tools = [{"type": "function", "function": f} for f in req_data["functions"]]
+
+    tool_specs = []
+    for t in raw_tools:
+        if isinstance(t, dict):
+            fn = t.get("function") if t.get("type") == "function" else t
+            if isinstance(fn, dict) and fn.get("name"):
+                tool_specs.append({
+                    "name": fn.get("name"),
+                    "description": fn.get("description", ""),
+                    "parameters": fn.get("parameters", {})
+                })
+
+    for msg in messages:
+        role = msg.get("role")
+        content = msg.get("content", "")
+        if role == "system":
+            system_text += f"\n{content}"
+        elif role == "user":
+            conversation_lines.append(f"User: {content}")
+        elif role == "assistant":
+            if content:
+                conversation_lines.append(f"Assistant: {content}")
+            tc_list = msg.get("tool_calls") or []
+            for tc in tc_list:
+                fn = tc.get("function", {})
+                conversation_lines.append(f"Assistant called tool {fn.get('name')}({fn.get('arguments')})")
+        elif role in ("tool", "function"):
+            conversation_lines.append(f"Tool {msg.get('name', 'result')}: {content}")
+
+    if tool_specs:
+        tool_descriptions = json.dumps(tool_specs, ensure_ascii=False, indent=2)
+        raw_tc = req_data.get("tool_choice") or "auto"
+        choice_note = ""
+        if isinstance(raw_tc, str) and raw_tc.lower() in ("required", "any"):
+            choice_note = "You MUST invoke one of the available functions."
+        elif isinstance(raw_tc, dict):
+            req_fn = raw_tc.get("function", {}).get("name") or raw_tc.get("name")
+            if req_fn:
+                choice_note = f"You MUST invoke the function '{req_fn}'."
+
+        system_text += (
+            f"\n\n[AVAILABLE TOOLS]\n{tool_descriptions}\n"
+            f"{choice_note}\n"
+            "To call a tool, you MUST respond ONLY with a JSON object in this exact format:\n"
+            "```json\n"
+            '{"name": "tool_name", "arguments": {"param1": "value"}}\n'
+            "```\n"
+            "Do NOT include any commentary, explanations, or greeting before or after the JSON."
+        )
+    else:
+        system_text += "\n\nAnswer the user directly and concisely in plain text. Do NOT call any tools or output JSON."
+
+    last_user_prompt = conversation_lines[-1] if conversation_lines else "Hello"
+    if len(conversation_lines) > 1:
+        history_context = "\n".join(conversation_lines[:-1])
+        full_prompt = f"{history_context}\n\n{last_user_prompt}"
+    else:
+        full_prompt = last_user_prompt
+
+    m_flag = "flash"
+    if "pro" in requested_model.lower():
+        m_flag = "pro"
+    elif "lite" in requested_model.lower():
+        m_flag = "flash_lite"
+
+    cmd = [agentapi_cmd] + subcommand_prefix + ["new-conversation", f"--model={m_flag}"]
+    if system_text.strip():
+        cmd.extend([f"System Instructions:\n{system_text.strip()}\n\n{full_prompt}"])
+    else:
+        cmd.extend([full_prompt])
+
+    try:
+        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=35)
+        if res.returncode != 0:
+            logger.warning(f"agentapi returned {res.returncode}: {res.stderr}")
+            return None
+
+        convo_id = None
+        try:
+            data = json.loads(res.stdout)
+            convo_id = data["response"]["newConversation"]["conversationId"]
+        except Exception:
+            m = re.search(r'"conversationId":\s*"([^"]+)"', res.stdout)
+            if m:
+                convo_id = m.group(1)
+
+        if not convo_id:
+            return None
+
+        search_dirs = [
+            Path.home() / ".gemini" / "antigravity" / "brain" / convo_id / ".system_generated" / "logs" / "transcript.jsonl",
+            Path("/root/.gemini/antigravity/brain") / convo_id / ".system_generated" / "logs" / "transcript.jsonl"
+        ]
+
+        start_wait = time.time()
+        while time.time() - start_wait < 30:
+            for p in search_dirs:
+                if p.exists() and p.stat().st_size > 50:
+                    text = p.read_text(encoding="utf-8")
+                    lines = [l for l in text.strip().split("\n") if l.strip()]
+                    for l in lines:
+                        try:
+                            step = json.loads(l)
+                            if step.get("source") == "MODEL":
+                                tool_calls = []
+                                model_content = step.get("content") or ""
+
+                                if tool_specs:
+                                    # 1. Native Antigravity tool_calls in transcript
+                                    if step.get("tool_calls"):
+                                        for tc in step.get("tool_calls"):
+                                            fn_name = tc.get("name", "")
+                                            fn_args = tc.get("args") or {}
+                                            args_str = json.dumps(fn_args, ensure_ascii=False) if isinstance(fn_args, (dict, list)) else str(fn_args)
+                                            tool_calls.append({
+                                                "id": f"call_{uuid.uuid4().hex[:20]}",
+                                                "type": "function",
+                                                "function": {
+                                                    "name": fn_name,
+                                                    "arguments": args_str
+                                                }
+                                            })
+
+                                    # 2. Check JSON tool call in content
+                                    if not tool_calls and model_content.strip():
+                                        content_stripped = model_content.strip()
+                                        extracted_json = None
+
+                                        fence_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', content_stripped, re.DOTALL)
+                                        if fence_match:
+                                            try:
+                                                extracted_json = json.loads(fence_match.group(1))
+                                            except Exception:
+                                                pass
+
+                                        if not extracted_json and content_stripped.startswith("{") and content_stripped.endswith("}"):
+                                            try:
+                                                extracted_json = json.loads(content_stripped)
+                                            except Exception:
+                                                pass
+
+                                        if isinstance(extracted_json, dict):
+                                            fn_name = extracted_json.get("name") or extracted_json.get("tool") or extracted_json.get("function")
+                                            fn_args = extracted_json.get("arguments")
+                                            if fn_args is None:
+                                                fn_args = extracted_json.get("parameters") or extracted_json.get("args") or {}
+
+                                            if fn_name and isinstance(fn_name, str):
+                                                args_str = json.dumps(fn_args, ensure_ascii=False) if isinstance(fn_args, (dict, list)) else str(fn_args)
+                                                tool_calls.append({
+                                                    "id": f"call_{uuid.uuid4().hex[:20]}",
+                                                    "type": "function",
+                                                    "function": {
+                                                        "name": fn_name,
+                                                        "arguments": args_str
+                                                    }
+                                                })
+                                                model_content = ""
+
+                                    if tool_calls:
+                                        parts = []
+                                        for tc in tool_calls:
+                                            try:
+                                                args_obj = json.loads(tc["function"]["arguments"])
+                                            except Exception:
+                                                args_obj = {"raw": tc["function"]["arguments"]}
+                                            parts.append({
+                                                "functionCall": {
+                                                    "name": tc["function"]["name"],
+                                                    "args": args_obj,
+                                                    "id": tc["id"]
+                                                }
+                                            })
+                                        return {
+                                            "candidates": [{
+                                                "content": {
+                                                    "parts": parts,
+                                                    "role": "model"
+                                                },
+                                                "finishReason": "TOOL_CALLS"
+                                            }],
+                                            "model": f"antigravity-{m_flag}"
+                                        }
+                                    elif model_content.strip():
+                                        return {
+                                            "candidates": [{
+                                                "content": {
+                                                    "parts": [{"text": model_content}],
+                                                    "role": "model"
+                                                },
+                                                "finishReason": "STOP"
+                                            }],
+                                            "model": f"antigravity-{m_flag}"
+                                        }
+                                else:
+                                    # Caller provided NO tools: return only clean text answer
+                                    if model_content.strip() and not step.get("tool_calls"):
+                                        return {
+                                            "candidates": [{
+                                                "content": {
+                                                    "parts": [{"text": model_content.strip()}],
+                                                    "role": "model"
+                                                },
+                                                "finishReason": "STOP"
+                                            }],
+                                            "model": f"antigravity-{m_flag}"
+                                        }
+                        except Exception:
+                            pass
+            time.sleep(0.3)
+    except Exception as ex:
+        logger.warning(f"Error in execute_via_antigravity_engine: {ex}")
+
+    return None
+
+
 def call_gemini_backend(gemini_payload: dict, requested_model: Optional[str] = None):
     last_error = None
     access_token = None
@@ -361,8 +613,6 @@ def call_gemini_backend(gemini_payload: dict, requested_model: Optional[str] = N
         access_token = get_active_access_token()
     except Exception as te:
         logger.warning("OAuth token notice: %s", te)
-
-    api_key = os.getenv("GEMINI_API_KEY", "")
 
     models_to_try = list(CASCADE_MODELS)
     if requested_model and "pro" in requested_model.lower():
@@ -372,10 +622,10 @@ def call_gemini_backend(gemini_payload: dict, requested_model: Optional[str] = N
 
     for model_name in models_to_try:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
-        headers = {"Content-Type": "application/json"}
-        if api_key:
-            url += f"?key={api_key}"
-        elif access_token:
+        headers = {
+            "Content-Type": "application/json"
+        }
+        if access_token:
             headers["Authorization"] = f"Bearer {access_token}"
 
         data_bytes = json.dumps(gemini_payload).encode("utf-8")
@@ -390,19 +640,18 @@ def call_gemini_backend(gemini_payload: dict, requested_model: Optional[str] = N
                 err_body = he.read().decode("utf-8")
             except Exception:
                 pass
-            logger.warning(f"Model {model_name} HTTP {he.code}: {err_body[:200]}")
+            logger.warning(f"Antigravity model {model_name} HTTP {he.code}: {err_body[:200]}")
             last_error = he
-            if he.code == 429:
-                time.sleep(1.0)
             continue
         except Exception as e:
-            logger.warning(f"Model {model_name} error: {e}")
+            logger.warning(f"Antigravity model {model_name} error: {e}")
             last_error = e
             continue
 
     if last_error:
         raise last_error
     raise RuntimeError("All Antigravity models failed")
+
 
 
 @router.get("/models", dependencies=[Depends(verify_auth)])
@@ -427,33 +676,46 @@ async def anthropic_messages(request: Request):
     requested_model = req_data.get("model", "antigravity-3.8-flash")
     msg_id = f"msg_{uuid.uuid4().hex[:24]}"
 
-    gemini_payload = convert_anthropic_to_gemini(req_data)
+    gemini_resp = None
+    used_model = requested_model
+
+    # 1. Primary: Try direct Antigravity Engine execution
     try:
-        gemini_resp, used_model = await asyncio.to_thread(call_gemini_backend, gemini_payload, requested_model)
-    except urllib.error.HTTPError as he:
-        status = 429 if he.code == 429 else 502
-        err_msg = "Google AI quota limit exceeded (429 Too Many Requests). Please wait a moment." if he.code == 429 else f"Upstream error {he.code}: {he.reason}"
-        return JSONResponse(
-            status_code=status,
-            content={
-                "type": "error",
-                "error": {
-                    "type": "rate_limit_error" if he.code == 429 else "api_error",
-                    "message": err_msg
+        ag_resp = await asyncio.to_thread(execute_via_antigravity_engine, req_data, requested_model)
+        if ag_resp:
+            gemini_resp = ag_resp
+            used_model = ag_resp.get("model", requested_model)
+    except Exception as ag_err:
+        logger.warning(f"Antigravity engine execution notice: {ag_err}")
+
+    # 2. Upstream cloud backend with Antigravity Pro credentials
+    if not gemini_resp:
+        gemini_payload = convert_anthropic_to_gemini(req_data)
+        try:
+            gemini_resp, used_model = await asyncio.to_thread(call_gemini_backend, gemini_payload, requested_model)
+        except urllib.error.HTTPError as he:
+            return JSONResponse(
+                status_code=he.code if he.code in (400, 401, 403, 404, 429) else 502,
+                content={
+                    "type": "error",
+                    "error": {
+                        "type": "api_error",
+                        "message": f"Antigravity upstream error {he.code}: {he.reason}"
+                    }
                 }
-            }
-        )
-    except Exception as e:
-        return JSONResponse(
-            status_code=502,
-            content={
-                "type": "error",
-                "error": {
-                    "type": "api_error",
-                    "message": f"Gateway error: {str(e)}"
+            )
+        except Exception as e:
+            return JSONResponse(
+                status_code=502,
+                content={
+                    "type": "error",
+                    "error": {
+                        "type": "api_error",
+                        "message": f"Antigravity gateway error: {str(e)}"
+                    }
                 }
-            }
-        )
+            )
+
 
     anthropic_content = []
     has_tool_call = False
@@ -587,33 +849,46 @@ async def openai_chat_completions(request: Request):
     chat_id = f"chatcmpl-{uuid.uuid4().hex[:24]}"
     created_ts = int(time.time())
 
-    gemini_payload = convert_openai_to_gemini(req_data)
+    gemini_resp = None
+    used_model = requested_model
+
+    # 1. Primary: Try direct Antigravity Engine execution
     try:
-        gemini_resp, used_model = await asyncio.to_thread(call_gemini_backend, gemini_payload, requested_model)
-    except urllib.error.HTTPError as he:
-        status = 429 if he.code == 429 else 502
-        err_msg = "Google AI quota limit exceeded (429 Too Many Requests). Please wait a moment." if he.code == 429 else f"Upstream error {he.code}: {he.reason}"
-        return JSONResponse(
-            status_code=status,
-            content={
-                "error": {
-                    "message": err_msg,
-                    "type": "rate_limit_error" if he.code == 429 else "api_error",
-                    "code": str(he.code)
+        ag_resp = await asyncio.to_thread(execute_via_antigravity_engine, req_data, requested_model)
+        if ag_resp:
+            gemini_resp = ag_resp
+            used_model = ag_resp.get("model", requested_model)
+    except Exception as ag_err:
+        logger.warning(f"Antigravity engine execution notice: {ag_err}")
+
+    # 2. Upstream cloud backend with Antigravity Pro credentials
+    if not gemini_resp:
+        gemini_payload = convert_openai_to_gemini(req_data)
+        try:
+            gemini_resp, used_model = await asyncio.to_thread(call_gemini_backend, gemini_payload, requested_model)
+        except urllib.error.HTTPError as he:
+            return JSONResponse(
+                status_code=he.code if he.code in (400, 401, 403, 404, 429) else 502,
+                content={
+                    "error": {
+                        "message": f"Antigravity upstream error {he.code}: {he.reason}",
+                        "type": "api_error",
+                        "code": str(he.code)
+                    }
                 }
-            }
-        )
-    except Exception as e:
-        return JSONResponse(
-            status_code=502,
-            content={
-                "error": {
-                    "message": f"Gateway error: {str(e)}",
-                    "type": "api_error",
-                    "code": "502"
+            )
+        except Exception as e:
+            return JSONResponse(
+                status_code=502,
+                content={
+                    "error": {
+                        "message": f"Antigravity gateway error: {str(e)}",
+                        "type": "api_error",
+                        "code": "502"
+                    }
                 }
-            }
-        )
+            )
+
 
     reply_text = ""
     tool_calls = []

@@ -25,6 +25,13 @@ RUN curl -fsSL https://github.com/cli/cli/releases/download/v2.58.0/gh_2.58.0_li
     chmod +x /usr/local/bin/gh && \
     rm -rf /tmp/gh_2.58.0_linux_amd64
 
+# Install Google Antigravity language_server core engine and agy / agentapi CLIs
+RUN curl -fsSL https://storage.googleapis.com/antigravity-public/insiders/1.0.20261005110209/unsigned/language_server-linux-x64 -o /usr/local/bin/language_server && \
+    chmod +x /usr/local/bin/language_server && \
+    ln -sf /usr/local/bin/language_server /usr/local/bin/agy && \
+    printf '#!/bin/sh\nexec /usr/local/bin/language_server agentapi "$@"\n' > /usr/local/bin/agentapi && \
+    chmod +x /usr/local/bin/agentapi
+
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
