@@ -614,26 +614,43 @@ def call_gemini_backend(gemini_payload: dict, requested_model: Optional[str] = N
     except Exception as te:
         logger.warning("OAuth token notice: %s", te)
 
-    models_to_try = list(CASCADE_MODELS)
-    if requested_model and "pro" in requested_model.lower():
-        if "gemini-3.1-pro-preview" in models_to_try:
-            models_to_try.remove("gemini-3.1-pro-preview")
-            models_to_try.insert(0, "gemini-3.1-pro-preview")
+    if not access_token:
+        raise RuntimeError("No active Antigravity Pro OAuth token available")
+
+    models_to_try = [
+        "gemini-3.8-flash-high",
+        "gemini-3.8-flash-medium",
+        "gemini-pro-agent",
+        "gemini-3.5-flash-lite"
+    ]
+    if requested_model:
+        rm = requested_model.lower()
+        if "pro" in rm:
+            models_to_try = ["gemini-pro-agent", "gemini-3.8-flash-high", "gemini-3.8-flash-medium"]
+        elif "lite" in rm:
+            models_to_try = ["gemini-3.5-flash-lite", "gemini-3.8-flash-medium"]
+
+    url = "https://daily-cloudcode-pa.googleapis.com/v1internal:generateContent"
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json",
+        "User-Agent": "antigravity/2.19.1"
+    }
 
     for model_name in models_to_try:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
-        headers = {
-            "Content-Type": "application/json"
+        envelope = {
+            "project": "aicode-consumers",
+            "model": model_name,
+            "requestId": str(uuid.uuid4()),
+            "request": gemini_payload
         }
-        if access_token:
-            headers["Authorization"] = f"Bearer {access_token}"
-
-        data_bytes = json.dumps(gemini_payload).encode("utf-8")
-        req = urllib.request.Request(url, data=data_bytes, headers=headers)
+        data_bytes = json.dumps(envelope).encode("utf-8")
+        req = urllib.request.Request(url, data=data_bytes, headers=headers, method="POST")
         try:
             with urllib.request.urlopen(req, context=SSL_CTX, timeout=35) as resp:
                 resp_json = json.loads(resp.read().decode("utf-8"))
-                return resp_json, model_name
+                actual_resp = resp_json.get("response", resp_json)
+                return actual_resp, model_name
         except urllib.error.HTTPError as he:
             err_body = ""
             try:
@@ -679,42 +696,32 @@ async def anthropic_messages(request: Request):
     gemini_resp = None
     used_model = requested_model
 
-    # 1. Primary: Try direct Antigravity Engine execution
+    # 1. Primary: Direct Antigravity Pro cloud endpoint
+    gemini_payload = convert_anthropic_to_gemini(req_data)
     try:
-        ag_resp = await asyncio.to_thread(execute_via_antigravity_engine, req_data, requested_model)
-        if ag_resp:
-            gemini_resp = ag_resp
-            used_model = ag_resp.get("model", requested_model)
-    except Exception as ag_err:
-        logger.warning(f"Antigravity engine execution notice: {ag_err}")
-
-    # 2. Upstream cloud backend with Antigravity Pro credentials
-    if not gemini_resp:
-        gemini_payload = convert_anthropic_to_gemini(req_data)
+        gemini_resp, used_model = await asyncio.to_thread(call_gemini_backend, gemini_payload, requested_model)
+    except Exception as primary_err:
+        logger.warning(f"Antigravity Pro cloud call notice: {primary_err}")
+        # 2. Secondary fallback: Local engine
         try:
-            gemini_resp, used_model = await asyncio.to_thread(call_gemini_backend, gemini_payload, requested_model)
-        except urllib.error.HTTPError as he:
-            return JSONResponse(
-                status_code=he.code if he.code in (400, 401, 403, 404, 429) else 502,
-                content={
-                    "type": "error",
-                    "error": {
-                        "type": "api_error",
-                        "message": f"Antigravity upstream error {he.code}: {he.reason}"
-                    }
+            ag_resp = await asyncio.to_thread(execute_via_antigravity_engine, req_data, requested_model)
+            if ag_resp:
+                gemini_resp = ag_resp
+                used_model = ag_resp.get("model", requested_model)
+        except Exception as ag_err:
+            logger.warning(f"Antigravity engine execution notice: {ag_err}")
+
+    if not gemini_resp:
+        return JSONResponse(
+            status_code=502,
+            content={
+                "type": "error",
+                "error": {
+                    "type": "api_error",
+                    "message": "Antigravity Pro gateway error: unable to complete request with Antigravity Pro credentials"
                 }
-            )
-        except Exception as e:
-            return JSONResponse(
-                status_code=502,
-                content={
-                    "type": "error",
-                    "error": {
-                        "type": "api_error",
-                        "message": f"Antigravity gateway error: {str(e)}"
-                    }
-                }
-            )
+            }
+        )
 
 
     anthropic_content = []
@@ -852,42 +859,32 @@ async def openai_chat_completions(request: Request):
     gemini_resp = None
     used_model = requested_model
 
-    # 1. Primary: Try direct Antigravity Engine execution
+    # 1. Primary: Direct Antigravity Pro cloud endpoint
+    gemini_payload = convert_openai_to_gemini(req_data)
     try:
-        ag_resp = await asyncio.to_thread(execute_via_antigravity_engine, req_data, requested_model)
-        if ag_resp:
-            gemini_resp = ag_resp
-            used_model = ag_resp.get("model", requested_model)
-    except Exception as ag_err:
-        logger.warning(f"Antigravity engine execution notice: {ag_err}")
-
-    # 2. Upstream cloud backend with Antigravity Pro credentials
-    if not gemini_resp:
-        gemini_payload = convert_openai_to_gemini(req_data)
+        gemini_resp, used_model = await asyncio.to_thread(call_gemini_backend, gemini_payload, requested_model)
+    except Exception as primary_err:
+        logger.warning(f"Antigravity Pro cloud call notice: {primary_err}")
+        # 2. Secondary fallback: Local engine
         try:
-            gemini_resp, used_model = await asyncio.to_thread(call_gemini_backend, gemini_payload, requested_model)
-        except urllib.error.HTTPError as he:
-            return JSONResponse(
-                status_code=he.code if he.code in (400, 401, 403, 404, 429) else 502,
-                content={
-                    "error": {
-                        "message": f"Antigravity upstream error {he.code}: {he.reason}",
-                        "type": "api_error",
-                        "code": str(he.code)
-                    }
+            ag_resp = await asyncio.to_thread(execute_via_antigravity_engine, req_data, requested_model)
+            if ag_resp:
+                gemini_resp = ag_resp
+                used_model = ag_resp.get("model", requested_model)
+        except Exception as ag_err:
+            logger.warning(f"Antigravity engine execution notice: {ag_err}")
+
+    if not gemini_resp:
+        return JSONResponse(
+            status_code=502,
+            content={
+                "error": {
+                    "message": "Antigravity Pro gateway error: unable to complete request with Antigravity Pro credentials",
+                    "type": "api_error",
+                    "code": "502"
                 }
-            )
-        except Exception as e:
-            return JSONResponse(
-                status_code=502,
-                content={
-                    "error": {
-                        "message": f"Antigravity gateway error: {str(e)}",
-                        "type": "api_error",
-                        "code": "502"
-                    }
-                }
-            )
+            }
+        )
 
 
     reply_text = ""

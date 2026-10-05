@@ -1750,22 +1750,34 @@ def git_sync(msg: str = Form("Autonomous Agent Workspace Sync")):
 
 @app.get("/api/antigravity/status")
 def antigravity_status():
-    """Checks Antigravity CLI installation and executes diagnostic ping."""
-    import shutil
-    cmd = ["/usr/local/bin/language_server", "agentapi", "new-conversation", "--model=flash", "Ping"]
-    if not os.path.exists(cmd[0]):
-        cmd = ["agentapi", "new-conversation", "--model=flash", "Ping"]
+    """Checks Antigravity Pro service and credentials status."""
+    import antigravity_gateway
     try:
-        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=20)
-        return {
-            "installed": True,
-            "cmd": cmd,
-            "exit_code": res.returncode,
-            "stdout": res.stdout,
-            "stderr": res.stderr
+        tok = antigravity_gateway.get_active_access_token()
+        headers = {
+            "Authorization": f"Bearer {tok}",
+            "Content-Type": "application/json",
+            "User-Agent": "antigravity/2.19.1"
         }
+        req = urllib.request.Request(
+            "https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels",
+            headers=headers,
+            data=b"{}",
+            method="POST"
+        )
+        with urllib.request.urlopen(req, timeout=10) as res:
+            data = json.loads(res.read().decode("utf-8"))
+            models_count = len(data.get("models", {}))
+            return {
+                "installed": True,
+                "status": "active",
+                "service": "Antigravity Pro",
+                "account": "aleksieievroman@gmail.com",
+                "models_available": models_count,
+                "primary_model": "gemini-3.8-flash-high"
+            }
     except Exception as e:
-        return {"installed": False, "cmd": cmd, "error": str(e)}
+        return {"installed": False, "status": "error", "error": str(e)}
 
 active_auth_process = None
 
