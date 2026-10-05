@@ -1752,6 +1752,7 @@ def git_sync(msg: str = Form("Autonomous Agent Workspace Sync")):
 def antigravity_status():
     """Checks Antigravity Pro service and credentials status."""
     import antigravity_gateway
+    import urllib.request
     try:
         tok = antigravity_gateway.get_active_access_token()
         headers = {
