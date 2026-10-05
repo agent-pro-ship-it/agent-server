@@ -106,10 +106,10 @@ def restore_workspace_from_storj():
     except Exception as e:
         logger.error(f"Error during workspace sync from Storj: {e}")
 
-try:
-    restore_workspace_from_storj()
-except Exception as e:
-    logger.warning(f"Startup workspace restore notice: {e}")
+@app.on_event("startup")
+async def startup_event():
+    logger.info("FastAPI startup: scheduling background workspace sync from Storj...")
+    asyncio.create_task(asyncio.to_thread(restore_workspace_from_storj))
 
 from codespaces_orchestrator import is_heavy_task, execute_in_codespace
 

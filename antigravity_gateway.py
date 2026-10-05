@@ -37,6 +37,7 @@ CASCADE_MODELS = [
     "gemini-3.5-flash",
     "gemini-3.1-pro-preview",
     "gemini-3.1-flash-lite",
+    "gemini-3.1-flash-lite-preview",
     "gemini-3-flash-preview"
 ]
 
@@ -391,6 +392,8 @@ def call_gemini_backend(gemini_payload: dict, requested_model: Optional[str] = N
                 pass
             logger.warning(f"Model {model_name} HTTP {he.code}: {err_body[:200]}")
             last_error = he
+            if he.code == 429:
+                time.sleep(1.0)
             continue
         except Exception as e:
             logger.warning(f"Model {model_name} error: {e}")
@@ -425,7 +428,32 @@ async def anthropic_messages(request: Request):
     msg_id = f"msg_{uuid.uuid4().hex[:24]}"
 
     gemini_payload = convert_anthropic_to_gemini(req_data)
-    gemini_resp, used_model = await asyncio.to_thread(call_gemini_backend, gemini_payload, requested_model)
+    try:
+        gemini_resp, used_model = await asyncio.to_thread(call_gemini_backend, gemini_payload, requested_model)
+    except urllib.error.HTTPError as he:
+        status = 429 if he.code == 429 else 502
+        err_msg = "Google AI quota limit exceeded (429 Too Many Requests). Please wait a moment." if he.code == 429 else f"Upstream error {he.code}: {he.reason}"
+        return JSONResponse(
+            status_code=status,
+            content={
+                "type": "error",
+                "error": {
+                    "type": "rate_limit_error" if he.code == 429 else "api_error",
+                    "message": err_msg
+                }
+            }
+        )
+    except Exception as e:
+        return JSONResponse(
+            status_code=502,
+            content={
+                "type": "error",
+                "error": {
+                    "type": "api_error",
+                    "message": f"Gateway error: {str(e)}"
+                }
+            }
+        )
 
     anthropic_content = []
     has_tool_call = False
@@ -560,7 +588,32 @@ async def openai_chat_completions(request: Request):
     created_ts = int(time.time())
 
     gemini_payload = convert_openai_to_gemini(req_data)
-    gemini_resp, used_model = await asyncio.to_thread(call_gemini_backend, gemini_payload, requested_model)
+    try:
+        gemini_resp, used_model = await asyncio.to_thread(call_gemini_backend, gemini_payload, requested_model)
+    except urllib.error.HTTPError as he:
+        status = 429 if he.code == 429 else 502
+        err_msg = "Google AI quota limit exceeded (429 Too Many Requests). Please wait a moment." if he.code == 429 else f"Upstream error {he.code}: {he.reason}"
+        return JSONResponse(
+            status_code=status,
+            content={
+                "error": {
+                    "message": err_msg,
+                    "type": "rate_limit_error" if he.code == 429 else "api_error",
+                    "code": str(he.code)
+                }
+            }
+        )
+    except Exception as e:
+        return JSONResponse(
+            status_code=502,
+            content={
+                "error": {
+                    "message": f"Gateway error: {str(e)}",
+                    "type": "api_error",
+                    "code": "502"
+                }
+            }
+        )
 
     reply_text = ""
     tool_calls = []
