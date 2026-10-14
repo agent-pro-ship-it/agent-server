@@ -993,6 +993,48 @@ async def openai_chat_completions(request: Request):
             await _type_and_send(user_prompt or "Hello")
             muse_text = await _wait_for_response(before_snap, timeout=240)
             
+            if stream:
+                async def muse_sse():
+                    chunk_header = {
+                        "id": chat_id,
+                        "object": "chat.completion.chunk",
+                        "created": created_ts,
+                        "model": requested_model,
+                        "choices": [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}]
+                    }
+                    yield f"data: {json.dumps(chunk_header, ensure_ascii=False)}\n\n"
+                    
+                    if muse_text:
+                        words = re.split(r'(\s+)', muse_text)
+                        for w in words:
+                            if not w:
+                                continue
+                            chunk_c = {
+                                "id": chat_id,
+                                "object": "chat.completion.chunk",
+                                "created": created_ts,
+                                "model": requested_model,
+                                "choices": [{"index": 0, "delta": {"content": w}, "finish_reason": None}]
+                            }
+                            yield f"data: {json.dumps(chunk_c, ensure_ascii=False)}\n\n"
+                            await asyncio.sleep(0.005)
+                    
+                    chunk_stop = {
+                        "id": chat_id,
+                        "object": "chat.completion.chunk",
+                        "created": created_ts,
+                        "model": requested_model,
+                        "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]
+                    }
+                    yield f"data: {json.dumps(chunk_stop, ensure_ascii=False)}\n\n"
+                    yield "data: [DONE]\n\n"
+
+                return StreamingResponse(
+                    muse_sse(),
+                    media_type="text/event-stream; charset=utf-8",
+                    headers={"Cache-Control": "no-cache", "Connection": "close"}
+                )
+
             return {
                 "id": chat_id,
                 "object": "chat.completion",
