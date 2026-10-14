@@ -2,3 +2,8 @@ __pycache__/
 *.pyc
 .env
 workspace/
+.muse_google_profile/
+*.jpg
+*.jpeg
+*.png
+*.mp3
