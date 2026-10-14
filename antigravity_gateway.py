@@ -795,6 +795,8 @@ def list_models():
     return {
         "object": "list",
         "data": [
+            {"id": "meta-muse-ai", "object": "model", "owned_by": "meta", "permission": []},
+            {"id": "meta-muse-code", "object": "model", "owned_by": "meta", "permission": []},
             {"id": "antigravity-3.8-flash", "object": "model", "owned_by": "antigravity", "permission": []},
             {"id": "antigravity-3.8-pro", "object": "model", "owned_by": "antigravity", "permission": []},
             {"id": "gemini-3.8-flash", "object": "model", "owned_by": "antigravity", "permission": []},
@@ -974,6 +976,37 @@ async def openai_chat_completions(request: Request):
     requested_model = req_data.get("model", "antigravity-3.8-flash")
     chat_id = f"chatcmpl-{uuid.uuid4().hex[:24]}"
     created_ts = int(time.time())
+
+    # Direct Route to Meta Muse Agent if model is 'meta-muse' or 'muse'
+    if "muse" in requested_model.lower():
+        from muse_bridge_server import _type_and_send, _wait_for_response, _ensure_muse_session, _get_response_snapshot, _is_logged_in
+        user_prompt = ""
+        for m in reversed(req_data.get("messages", [])):
+            if m.get("role") == "user":
+                c = m.get("content")
+                user_prompt = c if isinstance(c, str) else str(c)
+                break
+        
+        try:
+            await _ensure_muse_session()
+            before_snap = await _get_response_snapshot()
+            await _type_and_send(user_prompt or "Hello")
+            muse_text = await _wait_for_response(before_snap, timeout=240)
+            
+            return {
+                "id": chat_id,
+                "object": "chat.completion",
+                "created": created_ts,
+                "model": requested_model,
+                "choices": [{
+                    "index": 0,
+                    "message": {"role": "assistant", "content": muse_text},
+                    "finish_reason": "stop"
+                }],
+                "usage": {"prompt_tokens": len(user_prompt)//4, "completion_tokens": len(muse_text)//4, "total_tokens": (len(user_prompt)+len(muse_text))//4}
+            }
+        except Exception as me:
+            logger.warning(f"Muse completion failed, falling back to Antigravity: {me}")
 
     gemini_resp = None
     used_model = requested_model

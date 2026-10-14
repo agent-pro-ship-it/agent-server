@@ -35,6 +35,9 @@ app.add_middleware(
 from antigravity_gateway import router as antigravity_v1_router
 app.include_router(antigravity_v1_router)
 
+from muse_bridge_server import router as muse_router
+app.include_router(muse_router)
+
 BASE_DIR = Path(__file__).resolve().parent
 WORKSPACE_DIR = BASE_DIR / "workspace"
 WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
