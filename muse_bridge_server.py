@@ -202,7 +202,23 @@ async def _get_response_snapshot() -> Dict[str, Any]:
     return await page.evaluate("""() => {
         const result = { count: 0, lastText: "" };
 
-        // Try role-based selectors
+        // 1. Match Muse AI 2026 Hatch bubbles
+        const hatchBubbles = document.querySelectorAll(
+            '.hatch-chat-groupable-bubble, [class*="hatch-agent-bubble"], [class*="hatch-chat-groupable-bubble"]'
+        );
+        if (hatchBubbles.length > 0) {
+            const agentBubbles = Array.from(hatchBubbles).filter(el => {
+                const parent = el.closest('.ms-auto') || el.closest('[class*="ms-auto"]');
+                return !parent && !el.className.includes('ms-auto');
+            });
+            if (agentBubbles.length > 0) {
+                result.count = agentBubbles.length;
+                result.lastText = agentBubbles[agentBubbles.length - 1].innerText.trim();
+                return result;
+            }
+        }
+
+        // 2. Try role-based selectors
         const roleSelectors = [
             '[data-message-author-role="assistant"]',
             '[data-message-role="assistant"]',
@@ -218,7 +234,7 @@ async def _get_response_snapshot() -> Dict[str, Any]:
             }
         }
 
-        // Try class-based selectors
+        // 3. Try class-based selectors
         const classSelectors = [
             '[class*="assistant"]',
             '[class*="agent-message"]',
@@ -236,7 +252,7 @@ async def _get_response_snapshot() -> Dict[str, Any]:
             }
         }
 
-        // Fallback: all message-like containers
+        // 4. Fallback: all message-like containers
         const allMsgs = document.querySelectorAll(
             '[class*="message"]:not([class*="input"]):not([class*="composer"])'
         );
@@ -279,66 +295,22 @@ async def _type_and_send(message: str):
     """Type a message into Muse chat and send it."""
     page = _muse_state["page"]
 
-    # Try to type via JS first
-    typed = await page.evaluate("""(msg) => {
-        const inputs = [
-            document.querySelector('[role="textbox"]'),
-            document.querySelector('[contenteditable="true"]'),
-            document.querySelector('[data-testid*="input"]'),
-            document.querySelector('[class*="composer"] [contenteditable="true"]'),
-            document.querySelector('textarea'),
-        ];
-        const input = inputs.find(el => el !== null);
-        if (!input) return false;
+    textarea = page.locator('textarea, [placeholder="Message"], [role="textbox"], [contenteditable="true"]').first
+    if await textarea.count() > 0:
+        try:
+            await textarea.click()
+            await textarea.fill(message)
+            await asyncio.sleep(0.3)
+            await textarea.press("Enter")
+            await asyncio.sleep(0.5)
+            return
+        except Exception:
+            pass
 
-        input.focus();
-        if (input.tagName === 'TEXTAREA' || input.tagName === 'INPUT') {
-            const setter = Object.getOwnPropertyDescriptor(
-                window.HTMLTextAreaElement.prototype, 'value'
-            )?.set || Object.getOwnPropertyDescriptor(
-                window.HTMLInputElement.prototype, 'value'
-            )?.set;
-            if (setter) setter.call(input, msg);
-            else input.value = msg;
-            input.dispatchEvent(new Event('input', { bubbles: true }));
-            input.dispatchEvent(new Event('change', { bubbles: true }));
-        } else {
-            input.innerText = msg;
-            input.dispatchEvent(new Event('input', { bubbles: true }));
-        }
-        return true;
-    }""", message)
-
-    if not typed:
-        # Fallback: keyboard input
-        for selector in ['[role="textbox"]', '[contenteditable="true"]', 'textarea']:
-            loc = page.locator(selector).first
-            if await loc.count() > 0:
-                await loc.click()
-                await page.keyboard.type(message, delay=10)
-                break
-
+    # Fallback to keyboard
+    await page.keyboard.type(message)
+    await page.keyboard.press("Enter")
     await asyncio.sleep(0.5)
-
-    # Click send
-    sent = await page.evaluate("""() => {
-        const btns = [
-            document.querySelector('button[aria-label*="Send"]'),
-            document.querySelector('button[aria-label*="send"]'),
-            document.querySelector('button[aria-label*="Submit"]'),
-            document.querySelector('button[data-testid*="send"]'),
-            document.querySelector('[class*="send-button"]'),
-            document.querySelector('[class*="submit-button"]'),
-        ];
-        const btn = btns.find(b => b && !b.disabled);
-        if (btn) { btn.click(); return true; }
-        return false;
-    }""")
-
-    if not sent:
-        await page.keyboard.press("Enter")
-
-    await asyncio.sleep(1)
 
 
 async def _wait_for_response(before_snapshot: Dict, timeout: int = MAX_WAIT) -> str:
