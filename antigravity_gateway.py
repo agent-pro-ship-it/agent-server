@@ -1048,7 +1048,17 @@ async def openai_chat_completions(request: Request):
                 "usage": {"prompt_tokens": len(user_prompt)//4, "completion_tokens": len(muse_text)//4, "total_tokens": (len(user_prompt)+len(muse_text))//4}
             }
         except Exception as me:
-            logger.warning(f"Muse completion failed, falling back to Antigravity: {me}")
+            logger.error(f"Muse completion failed: {me}")
+            return JSONResponse(
+                status_code=500,
+                content={
+                    "error": {
+                        "message": f"Meta Muse Bridge error: {str(me)}",
+                        "type": "muse_bridge_error",
+                        "code": "500"
+                    }
+                }
+            )
 
     gemini_resp = None
     used_model = requested_model

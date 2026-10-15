@@ -89,6 +89,10 @@ async def _ensure_muse_session():
         "--no-default-browser-check",
         "--disable-blink-features=AutomationControlled",
         "--window-size=1280,800",
+        "--js-flags=--max-old-space-size=128",
+        "--renderer-process-limit=1",
+        "--disable-extensions",
+        "--disable-software-rasterizer",
     ]
 
     context = await pw.chromium.launch_persistent_context(
@@ -105,22 +109,34 @@ async def _ensure_muse_session():
         ),
     )
 
+    # Block heavy media to save 350MB of RAM and prevent OOM crash
+    try:
+        await context.route("**/*.{png,jpg,jpeg,webp,gif,mp4,webm,woff,woff2,ttf,otf}", lambda route: route.abort())
+    except Exception:
+        pass
+
     # Anti-detection
     await context.add_init_script("""
         Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
         window.chrome = { runtime: {} };
     """)
 
-    # Load saved cookies if available
-    cookies_file = WORKSPACE_DIR / "muse_cookies.json"
-    if cookies_file.exists():
-        try:
-            cookies = json.loads(cookies_file.read_text(encoding="utf-8"))
-            if isinstance(cookies, list) and cookies:
-                await context.add_cookies(cookies)
-                logger.info(f"Loaded {len(cookies)} Muse cookies from storage.")
-        except Exception as e:
-            logger.warning(f"Error loading Muse cookies: {e}")
+    # Load saved cookies if available from multiple paths
+    cookie_paths = [
+        WORKSPACE_DIR / "muse_cookies.json",
+        Path(__file__).resolve().parent / "muse_cookies.json",
+        Path("muse_cookies.json")
+    ]
+    for cp in cookie_paths:
+        if cp.exists():
+            try:
+                cookies = json.loads(cp.read_text(encoding="utf-8"))
+                if isinstance(cookies, list) and cookies:
+                    await context.add_cookies(cookies)
+                    logger.info(f"Loaded {len(cookies)} Muse cookies from {cp}.")
+                    break
+            except Exception as e:
+                logger.warning(f"Error loading Muse cookies from {cp}: {e}")
 
     page = context.pages[0] if context.pages else await context.new_page()
     await page.goto(MUSE_URL, wait_until="domcontentloaded", timeout=30000)
