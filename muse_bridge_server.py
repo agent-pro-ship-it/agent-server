@@ -220,7 +220,26 @@ async def _get_response_snapshot() -> Dict[str, Any]:
     return await page.evaluate("""() => {
         const result = { count: 0, lastText: "" };
 
-        // 1. Meta Muse AI uses 'Copy response' buttons on every assistant answer
+        // 1. Meta Muse 2026 messages: container with group/msg
+        const msgs = Array.from(document.querySelectorAll('[class*="group/msg"]'));
+        const assistantMsgs = msgs.filter(el => {
+            const cls = typeof el.className === 'string' ? el.className : '';
+            return !cls.includes('ms-auto') && !el.closest('.ms-auto');
+        });
+
+        if (assistantMsgs.length > 0) {
+            result.count = assistantMsgs.length;
+            const last = assistantMsgs[assistantMsgs.length - 1];
+            const clone = last.cloneNode(true);
+            clone.querySelectorAll('button, svg, [role="toolbar"], [class*="opacity-0"]').forEach(b => b.remove());
+            const clean = (clone.innerText || clone.textContent || '').trim();
+            if (clean) {
+                result.lastText = clean;
+                return result;
+            }
+        }
+
+        // 2. Meta Muse AI uses 'Copy response' buttons on every assistant answer
         const copyBtns = Array.from(
             document.querySelectorAll('button[aria-label*="Copy" i], button[aria-label*="copy" i], button[aria-label*="Копировать" i]')
         );
@@ -427,51 +446,92 @@ async def _type_and_send(message: str):
     await asyncio.sleep(1.0)
 
 
-async def _wait_for_response(before_snapshot: Dict, timeout: int = MAX_WAIT) -> str:
-    """Wait for a new response and return its text once generation is complete."""
+async def _wait_for_response(before_snapshot: Dict, timeout: int = 300) -> str:
+    """Wait for a new response and return its text once generation is complete.
+    Actively tracks whether Muse is typing, extends timeout dynamically, and returns the full output.
+    """
     start = time.time()
+    before_count = before_snapshot.get("count", 0)
+    before_text = before_snapshot.get("lastText", "")
+    before_len = len(before_text)
 
-    while time.time() - start < timeout:
-        await asyncio.sleep(2)
+    # Phase 1: Wait for Muse to start responding (first characters or bubble appears)
+    first_detected_time = None
+    last_text = ""
+    last_len = 0
+    last_activity_time = time.time()
+
+    # Wait up to 60s for Muse to begin output
+    while (time.time() - start) < 60:
+        await asyncio.sleep(1.5)
         current = await _get_response_snapshot()
+        curr_text = current.get("lastText", "")
+        curr_len = len(curr_text)
+        curr_count = current.get("count", 0)
 
-        new_appeared = (
-            current["count"] > before_snapshot.get("count", 0)
-            or (
-                current.get("lastText")
-                and current["lastText"] != before_snapshot.get("lastText", "")
-                and len(current["lastText"]) > len(before_snapshot.get("lastText", ""))
-            )
+        is_new = (
+            curr_count > before_count
+            or (curr_len > before_len and curr_text != before_text)
+            or (curr_len > 0 and before_len == 0)
         )
 
-        if new_appeared:
-            # Wait for streaming to finish
-            stable_text = current.get("lastText", "")
+        if is_new:
+            first_detected_time = time.time()
+            last_text = curr_text
+            last_len = curr_len
+            last_activity_time = time.time()
+            break
+
+        if await _is_generating():
+            first_detected_time = time.time()
+            last_activity_time = time.time()
+            break
+
+    if not first_detected_time:
+        # Check one final time before giving up
+        snap = await _get_response_snapshot()
+        if snap.get("lastText") and snap.get("lastText") != before_text:
+            return snap.get("lastText")
+        return "[NO RESPONSE — TIMEOUT]"
+
+    # Phase 2: Active Streaming Monitoring
+    # While Muse is typing (length is growing) or generating spinner is active, keep waiting up to 360s!
+    stable_checks = 0
+
+    while (time.time() - start) < 360:
+        await asyncio.sleep(1.5)
+        generating = await _is_generating()
+        snap = await _get_response_snapshot()
+        curr_text = snap.get("lastText", "")
+        curr_len = len(curr_text)
+
+        if curr_len > last_len:
+            # Text is actively streaming!
+            last_len = curr_len
+            last_text = curr_text
+            last_activity_time = time.time()
+            stable_checks = 0
+            continue
+
+        idle_time = time.time() - last_activity_time
+
+        if not generating:
+            if curr_len > 0 and curr_len == last_len:
+                stable_checks += 1
+                if stable_checks >= 2 and idle_time >= 3.0:
+                    # Generation complete and text is stable
+                    return curr_text
+        else:
             stable_checks = 0
 
-            while time.time() - start < timeout:
-                await asyncio.sleep(2)
-                generating = await _is_generating()
-                snap = await _get_response_snapshot()
-                latest = snap.get("lastText", "")
+        # If text hasn't grown for 35 seconds and generation spinner is gone, conclude
+        if idle_time > 35:
+            if curr_len > 0:
+                return curr_text
+            break
 
-                if not generating:
-                    if latest and latest == stable_text:
-                        stable_checks += 1
-                        if stable_checks >= 2:
-                            return latest
-                    else:
-                        stable_text = latest
-                        stable_checks = 0
-                else:
-                    stable_text = latest
-                    stable_checks = 0
-
-            # Timeout but got partial response
-            snap = await _get_response_snapshot()
-            return snap.get("lastText") or "[PARTIAL RESPONSE — TIMEOUT]"
-
-    return "[NO RESPONSE — TIMEOUT]"
+    final_snap = await _get_response_snapshot()
+    return final_snap.get("lastText") or last_text or "[PARTIAL RESPONSE — TIMEOUT]"
 
 
 def extract_code_blocks(text: str) -> List[Dict[str, str]]:
@@ -655,6 +715,31 @@ async def muse_send(req: MuseSendRequest):
         _muse_state["last_error"] = str(e)
         logger.error(f"Muse send error: {e}")
         return {"success": False, "error": str(e), "response": None}
+
+
+@router.get("/last-response")
+async def muse_last_response():
+    """Get the latest completed response directly from the Muse chat page."""
+    try:
+        await _ensure_muse_session()
+        page = _muse_state["page"]
+        if not page:
+            return {"success": False, "error": "No active page"}
+
+        snap = await _get_response_snapshot()
+        text = snap.get("lastText", "")
+        generating = await _is_generating()
+        code_blocks = extract_code_blocks(text)
+
+        return {
+            "success": bool(text),
+            "response": text,
+            "generating": generating,
+            "code_blocks": code_blocks,
+            "code_blocks_count": len(code_blocks),
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
 
 
 @router.post("/screenshot")
