@@ -215,10 +215,44 @@ async def _is_logged_in() -> bool:
 async def _get_response_snapshot() -> Dict[str, Any]:
     """Get current state of responses on page."""
     page = _muse_state["page"]
+    if not page:
+        return {"count": 0, "lastText": ""}
     return await page.evaluate("""() => {
         const result = { count: 0, lastText: "" };
 
-        // 1. Match Muse AI 2026 Hatch bubbles
+        // 1. Meta Muse AI uses 'Copy response' buttons on every assistant answer
+        const copyBtns = Array.from(
+            document.querySelectorAll('button[aria-label*="Copy" i], button[aria-label*="copy" i], button[aria-label*="Копировать" i]')
+        );
+        if (copyBtns.length > 0) {
+            result.count = copyBtns.length;
+            const lastBtn = copyBtns[copyBtns.length - 1];
+
+            // Traverse up to find the message bubble containing this copy button
+            let cur = lastBtn.parentElement;
+            let targetContainer = cur;
+            while (cur && cur !== document.body) {
+                // If container contains more than 1 copy button, we went too far up
+                const nested = cur.querySelectorAll('button[aria-label*="Copy" i], button[aria-label*="copy" i], button[aria-label*="Копировать" i]');
+                if (nested.length > 1) {
+                    break;
+                }
+                targetContainer = cur;
+                cur = cur.parentElement;
+            }
+
+            if (targetContainer) {
+                const clone = targetContainer.cloneNode(true);
+                clone.querySelectorAll('button, svg, [role="toolbar"], [aria-label*="Copy" i], [aria-label*="React" i], [aria-label*="Reply" i], [aria-label*="options" i]').forEach(el => el.remove());
+                const cleanText = (clone.innerText || clone.textContent || "").trim();
+                if (cleanText) {
+                    result.lastText = cleanText;
+                    return result;
+                }
+            }
+        }
+
+        // 2. Match Muse AI Hatch bubbles
         const hatchBubbles = document.querySelectorAll(
             '.hatch-chat-groupable-bubble, [class*="hatch-agent-bubble"], [class*="hatch-chat-groupable-bubble"]'
         );
@@ -234,7 +268,7 @@ async def _get_response_snapshot() -> Dict[str, Any]:
             }
         }
 
-        // 2. Try role-based selectors
+        // 3. Try role-based selectors
         const roleSelectors = [
             '[data-message-author-role="assistant"]',
             '[data-message-role="assistant"]',
@@ -250,7 +284,7 @@ async def _get_response_snapshot() -> Dict[str, Any]:
             }
         }
 
-        // 3. Try class-based selectors
+        // 4. Try class-based selectors
         const classSelectors = [
             '[class*="assistant"]',
             '[class*="agent-message"]',
@@ -268,7 +302,7 @@ async def _get_response_snapshot() -> Dict[str, Any]:
             }
         }
 
-        // 4. Fallback: all message-like containers
+        // 5. Fallback: all message-like containers
         const allMsgs = document.querySelectorAll(
             '[class*="message"]:not([class*="input"]):not([class*="composer"])'
         );
@@ -284,19 +318,20 @@ async def _get_response_snapshot() -> Dict[str, Any]:
 async def _is_generating() -> bool:
     """Check if Muse is still streaming a response."""
     page = _muse_state["page"]
+    if not page:
+        return False
     return await page.evaluate("""() => {
         const indicators = [
+            'button[aria-label*="Stop" i]',
+            'button[aria-label*="stop" i]',
+            'button[aria-label*="Cancel" i]',
+            '[class*="stop-button"]',
+            '[data-testid*="stop"]',
             '[class*="loading"]',
             '[class*="spinner"]',
             '[class*="generating"]',
             '[class*="streaming"]',
             '[class*="typing"]',
-            '[class*="progress"]',
-            'button[aria-label*="Stop"]',
-            'button[aria-label*="stop"]',
-            'button[aria-label*="Cancel"]',
-            '[class*="stop-button"]',
-            '[data-testid*="stop"]',
             '[class*="cursor"][class*="blink"]',
         ];
         for (const sel of indicators) {
@@ -310,23 +345,86 @@ async def _is_generating() -> bool:
 async def _type_and_send(message: str):
     """Type a message into Muse chat and send it."""
     page = _muse_state["page"]
+    if not page:
+        raise Exception("No active page")
 
-    textarea = page.locator('textarea, [placeholder="Message"], [role="textbox"], [contenteditable="true"]').first
+    textarea = page.locator('textarea, [placeholder*="Message" i], [role="textbox"], [contenteditable="true"]').first
     if await textarea.count() > 0:
         try:
             await textarea.click()
             await textarea.fill(message)
             await asyncio.sleep(0.3)
-            await textarea.press("Enter")
-            await asyncio.sleep(0.5)
-            return
         except Exception:
-            pass
+            await page.keyboard.type(message)
+            await asyncio.sleep(0.3)
 
-    # Fallback to keyboard
-    await page.keyboard.type(message)
-    await page.keyboard.press("Enter")
-    await asyncio.sleep(0.5)
+    # Ensure React/DOM input events fire
+    await page.evaluate("""(msg) => {
+        const ta = document.querySelector('textarea, [placeholder*="Message" i], [role="textbox"]');
+        if (ta) {
+            if (!ta.value || ta.value !== msg) {
+                ta.value = msg;
+            }
+            ta.dispatchEvent(new Event('input', { bubbles: true }));
+            ta.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+    }""", message)
+    await asyncio.sleep(0.4)
+
+    # Find and click Send button in the composer pill
+    clicked = await page.evaluate("""() => {
+        const ta = document.querySelector('textarea, [placeholder*="Message" i], [role="textbox"]');
+        if (!ta) return false;
+
+        const container = ta.closest('form') ||
+                          ta.closest('div[class*="rounded"]') ||
+                          ta.parentElement?.parentElement ||
+                          ta.parentElement;
+
+        if (container) {
+            const btns = Array.from(container.querySelectorAll('button')).filter(b => !b.disabled);
+            // 1. Explicit send label
+            for (const b of btns) {
+                const label = (b.getAttribute('aria-label') || '').toLowerCase();
+                if (label.includes('send') || label.includes('отправить') || label.includes('submit')) {
+                    b.click();
+                    return true;
+                }
+            }
+            // 2. Button with SVG (the round arrow up button in Meta/Muse AI)
+            const svgBtns = btns.filter(b => b.querySelector('svg'));
+            if (svgBtns.length > 0) {
+                svgBtns[svgBtns.length - 1].click();
+                return true;
+            }
+            // 3. Last enabled button in composer
+            if (btns.length > 0) {
+                btns[btns.length - 1].click();
+                return true;
+            }
+        }
+        return false;
+    }""")
+
+    if not clicked:
+        try:
+            await textarea.press("Enter")
+        except Exception:
+            await page.keyboard.press("Enter")
+    else:
+        # Also send Enter as backup if input not cleared
+        await asyncio.sleep(0.5)
+        is_cleared = await page.evaluate("""() => {
+            const ta = document.querySelector('textarea, [placeholder*="Message" i]');
+            return !ta || !ta.value || ta.value.trim().length === 0;
+        }""")
+        if not is_cleared:
+            try:
+                await textarea.press("Enter")
+            except Exception:
+                await page.keyboard.press("Enter")
+
+    await asyncio.sleep(1.0)
 
 
 async def _wait_for_response(before_snapshot: Dict, timeout: int = MAX_WAIT) -> str:
@@ -338,27 +436,27 @@ async def _wait_for_response(before_snapshot: Dict, timeout: int = MAX_WAIT) -> 
         current = await _get_response_snapshot()
 
         new_appeared = (
-            current["count"] > before_snapshot["count"]
+            current["count"] > before_snapshot.get("count", 0)
             or (
-                current["lastText"]
-                and current["lastText"] != before_snapshot["lastText"]
+                current.get("lastText")
+                and current["lastText"] != before_snapshot.get("lastText", "")
                 and len(current["lastText"]) > len(before_snapshot.get("lastText", ""))
             )
         )
 
         if new_appeared:
             # Wait for streaming to finish
-            stable_text = ""
+            stable_text = current.get("lastText", "")
             stable_checks = 0
 
             while time.time() - start < timeout:
                 await asyncio.sleep(2)
                 generating = await _is_generating()
                 snap = await _get_response_snapshot()
-                latest = snap["lastText"]
+                latest = snap.get("lastText", "")
 
                 if not generating:
-                    if latest == stable_text:
+                    if latest and latest == stable_text:
                         stable_checks += 1
                         if stable_checks >= 2:
                             return latest
@@ -371,7 +469,7 @@ async def _wait_for_response(before_snapshot: Dict, timeout: int = MAX_WAIT) -> 
 
             # Timeout but got partial response
             snap = await _get_response_snapshot()
-            return snap["lastText"] or "[PARTIAL RESPONSE — TIMEOUT]"
+            return snap.get("lastText") or "[PARTIAL RESPONSE — TIMEOUT]"
 
     return "[NO RESPONSE — TIMEOUT]"
 
@@ -656,3 +754,21 @@ async def muse_debug():
         return {"success": True, "dom": info}
     except Exception as e:
         return {"success": False, "error": str(e)}
+
+
+class MuseEvalRequest(BaseModel):
+    expression: str
+
+@router.post("/eval")
+async def muse_eval(req: MuseEvalRequest):
+    """Evaluate arbitrary JavaScript on the active Muse page."""
+    try:
+        await _ensure_muse_session()
+        page = _muse_state["page"]
+        if not page:
+            return {"success": False, "error": "No active page"}
+        res = await page.evaluate(req.expression)
+        return {"success": True, "result": res}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
