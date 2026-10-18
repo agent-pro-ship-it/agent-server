@@ -52,7 +52,7 @@ s3_client = None
 try:
     cfg = Config(
         signature_version='s3v4',
-        s3={'payload_signing_enabled': False, 'addressing_style': 'path'},
+        s3={'payload_signing_enabled': True, 'addressing_style': 'path'},
         request_checksum_calculation='when_required',
         response_checksum_validation='when_required'
     )

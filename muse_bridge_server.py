@@ -125,12 +125,29 @@ async def _ensure_muse_session():
     target_cp = WORKSPACE_DIR / "muse_cookies.json"
     if not target_cp.exists() or target_cp.stat().st_size < 10:
         try:
-            from main import s3_client, STORJ_BUCKET
-            if s3_client:
-                res = s3_client.get_object(Bucket=STORJ_BUCKET, Key="muse_cookies.json")
-                target_cp.parent.mkdir(parents=True, exist_ok=True)
-                target_cp.write_bytes(res["Body"].read())
-                logger.info(f"Auto-downloaded muse_cookies.json from Storj S3 into {target_cp}")
+            client = None
+            try:
+                from main import s3_client as main_s3
+                client = main_s3
+            except Exception:
+                pass
+            if not client:
+                import boto3
+                from botocore.config import Config
+                cfg = Config(signature_version='s3v4', s3={'payload_signing_enabled': True, 'addressing_style': 'path'})
+                client = boto3.client(
+                    's3',
+                    endpoint_url=os.getenv("STORJ_ENDPOINT_URL", "https://gateway.storjshare.io"),
+                    aws_access_key_id=os.getenv("STORJ_ACCESS_KEY_ID", "juaj3eczxxsdizjdgnv63one2yza"),
+                    aws_secret_access_key=os.getenv("STORJ_SECRET_ACCESS_KEY", "jz5jrlmqdg5a6ycpihbivazqmgp7seklhrqqriqxb4eknw4xo24xq"),
+                    config=cfg,
+                    verify=False
+                )
+            bucket = os.getenv("STORJ_BUCKET_NAME", "agent-vault")
+            res = client.get_object(Bucket=bucket, Key="muse_cookies.json")
+            target_cp.parent.mkdir(parents=True, exist_ok=True)
+            target_cp.write_bytes(res["Body"].read())
+            logger.info(f"Auto-downloaded muse_cookies.json from Storj S3 into {target_cp}")
         except Exception as se:
             logger.warning(f"Could not download muse_cookies.json from Storj: {se}")
 
