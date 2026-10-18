@@ -121,9 +121,22 @@ async def _ensure_muse_session():
         window.chrome = { runtime: {} };
     """)
 
+    # Auto-restore muse_cookies.json from Storj S3 if missing locally
+    target_cp = WORKSPACE_DIR / "muse_cookies.json"
+    if not target_cp.exists() or target_cp.stat().st_size < 10:
+        try:
+            from main import s3_client, STORJ_BUCKET
+            if s3_client:
+                res = s3_client.get_object(Bucket=STORJ_BUCKET, Key="muse_cookies.json")
+                target_cp.parent.mkdir(parents=True, exist_ok=True)
+                target_cp.write_bytes(res["Body"].read())
+                logger.info(f"Auto-downloaded muse_cookies.json from Storj S3 into {target_cp}")
+        except Exception as se:
+            logger.warning(f"Could not download muse_cookies.json from Storj: {se}")
+
     # Load saved cookies if available from multiple paths
     cookie_paths = [
-        WORKSPACE_DIR / "muse_cookies.json",
+        target_cp,
         Path(__file__).resolve().parent / "muse_cookies.json",
         Path("muse_cookies.json")
     ]
@@ -471,7 +484,7 @@ async def _wait_for_response(before_snapshot: Dict, timeout: int = 300) -> str:
 
         is_new = (
             curr_count > before_count
-            or (curr_len > before_len and curr_text != before_text)
+            or (curr_text and curr_text != before_text)
             or (curr_len > 0 and before_len == 0)
         )
 
