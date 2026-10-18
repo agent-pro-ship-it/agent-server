@@ -38,6 +38,9 @@ app.include_router(antigravity_v1_router)
 from muse_bridge_server import router as muse_router
 app.include_router(muse_router)
 
+from muse_agent_bridge import router as muse_agent_router
+app.include_router(muse_agent_router)
+
 BASE_DIR = Path(__file__).resolve().parent
 WORKSPACE_DIR = BASE_DIR / "workspace"
 WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
