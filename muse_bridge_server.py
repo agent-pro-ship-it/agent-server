@@ -151,9 +151,9 @@ async def _ensure_muse_session():
         ),
     )
 
-    # Block heavy media to save 350MB of RAM and prevent OOM crash
+    # Only block video media
     try:
-        await context.route("**/*.{png,jpg,jpeg,webp,gif,mp4,webm,woff,woff2,ttf,otf}", lambda route: route.abort())
+        await context.route("**/*.{mp4,webm}", lambda route: route.abort())
     except Exception:
         pass
 
