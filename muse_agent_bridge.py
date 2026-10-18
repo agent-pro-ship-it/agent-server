@@ -66,14 +66,21 @@ class TaskStore:
             try:
                 import boto3
                 from botocore.config import Config
+                # NOTE: same client config as main.py — Storj's gateway rejects
+                # PUTs without a Content-Length header, which happens when
+                # payload signing is off. Keep in sync with main.py.
                 self.s3 = boto3.client(
                     "s3", endpoint_url=endpoint,
                     aws_access_key_id=ak, aws_secret_access_key=sk,
-                    config=Config(signature_version="s3v4",
-                                  s3={"addressing_style": "path"}),
+                    config=Config(
+                        signature_version="s3v4",
+                        s3={"payload_signing_enabled": True,
+                            "addressing_style": "path"},
+                        request_checksum_calculation="when_required",
+                        response_checksum_validation="when_required",
+                    ),
                     verify=False,
                 )
-                # cheap connectivity probe (bucket may not exist yet -> create lazily on put)
                 logger.info("MuseAgentBridge: S3 task store ready (bucket=%s)", self.bucket)
             except Exception as exc:
                 logger.warning("MuseAgentBridge: S3 init failed, using local store: %s", exc)
@@ -118,7 +125,10 @@ class TaskStore:
             pass
 
     def list_task_keys(self) -> List[str]:
-        keys: List[str] = []
+        # Merge S3 and local listings (dedup by key): the local dir is a
+        # fallback when S3 writes fail, so a task must never become invisible
+        # just because it landed in the other store.
+        seen: Dict[str, None] = {}
         if self.s3:
             try:
                 paginator = self.s3.get_paginator("list_objects_v2")
@@ -126,15 +136,14 @@ class TaskStore:
                     for obj in page.get("Contents", []):
                         k = obj["Key"]
                         if k.count("/") == 1 and k.endswith(".json"):
-                            keys.append(k)
-                return keys
+                            seen[k] = None
             except Exception as exc:
                 logger.warning("S3 list failed, using local: %s", exc)
         for p in self.local_dir.glob("*.json"):
             m = _LOCAL_TASK_RE.match(p.stem)
             if m:
-                keys.append(TASK_PREFIX + m.group(1) + ".json")
-        return keys
+                seen.setdefault(TASK_PREFIX + m.group(1) + ".json", None)
+        return sorted(seen.keys())
 
 
 store = TaskStore()
