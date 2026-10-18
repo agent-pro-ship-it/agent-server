@@ -60,6 +60,48 @@ def _get_chromium_executable() -> Optional[str]:
     return None
 
 
+def _sanitize_cookies(raw_cookies: Any) -> List[Dict[str, Any]]:
+    """Sanitize and normalize cookies for Playwright compatibility."""
+    if isinstance(raw_cookies, str):
+        try:
+            raw_cookies = json.loads(raw_cookies)
+        except Exception:
+            return []
+    if not isinstance(raw_cookies, list):
+        return []
+
+    valid = []
+    for c in raw_cookies:
+        if not isinstance(c, dict):
+            continue
+        name = c.get("name")
+        value = c.get("value")
+        if not name or value is None:
+            continue
+
+        cookie = {
+            "name": str(name),
+            "value": str(value),
+            "domain": str(c.get("domain", ".muse.ai")),
+            "path": c.get("path", "/"),
+        }
+        if "secure" in c:
+            cookie["secure"] = bool(c["secure"])
+        if "httpOnly" in c:
+            cookie["httpOnly"] = bool(c["httpOnly"])
+
+        same_site = str(c.get("sameSite", "")).lower()
+        if same_site in ["strict"]:
+            cookie["sameSite"] = "Strict"
+        elif same_site in ["none", "no_restriction"]:
+            cookie["sameSite"] = "None"
+        else:
+            cookie["sameSite"] = "Lax"
+
+        valid.append(cookie)
+    return valid
+
+
 async def _ensure_muse_session():
     """Launch or reuse persistent Muse browser session."""
     if _muse_state["ready"] and _muse_state["page"]:
@@ -162,8 +204,9 @@ async def _ensure_muse_session():
             try:
                 cookies = json.loads(cp.read_text(encoding="utf-8"))
                 if isinstance(cookies, list) and cookies:
-                    await context.add_cookies(cookies)
-                    logger.info(f"Loaded {len(cookies)} Muse cookies from {cp}.")
+                    sanitized = _sanitize_cookies(cookies)
+                    await context.add_cookies(sanitized)
+                    logger.info(f"Loaded {len(sanitized)} sanitized Muse cookies from {cp}.")
                     break
             except Exception as e:
                 logger.warning(f"Error loading Muse cookies from {cp}: {e}")

@@ -1,155 +1,155 @@
 [
-{
+  {
     "domain": ".muse.ai",
     "expirationDate": 1799765717,
     "hostOnly": false,
     "httpOnly": false,
     "name": "_fbp",
     "path": "/",
-    "sameSite": "lax",
+    "sameSite": "Lax",
     "secure": false,
     "session": false,
     "storeId": "0",
     "value": "fb.1.1791988244265.86060314891116895",
     "id": 1
-},
-{
+  },
+  {
     "domain": ".muse.ai",
     "expirationDate": 1826548231,
     "hostOnly": false,
     "httpOnly": true,
     "name": "datr",
     "path": "/",
-    "sameSite": "lax",
+    "sameSite": "Lax",
     "secure": true,
     "session": false,
     "storeId": "0",
     "value": "B5LPakAZsduLhaCAPD9cn4-A",
     "id": 2
-},
-{
+  },
+  {
     "domain": ".muse.ai",
     "expirationDate": 1792593040,
     "hostOnly": false,
     "httpOnly": false,
     "name": "dpr",
     "path": "/",
-    "sameSite": "unspecified",
+    "sameSite": "Lax",
     "secure": true,
     "session": false,
     "storeId": "0",
     "value": "1",
     "id": 3
-},
-{
+  },
+  {
     "domain": ".muse.ai",
     "expirationDate": 1823806591,
     "hostOnly": false,
     "httpOnly": true,
     "name": "hatch_gw",
     "path": "/",
-    "sameSite": "lax",
+    "sameSite": "Lax",
     "secure": true,
     "session": false,
     "storeId": "0",
     "value": "v1%3AmUGUef1RzYGv5Fqpp8-1jSs1Ya5sZsglpZkX6rlWve2KJ2E0KuuA2K6vZ6AsC0IaU3NdBHqcOd1hFGWm1Z4CRtYHpH3abrq5bOh4VbVaBW1AFnPdvP0P_93srjSulAKIEaI9TUJPH0--kfrDG-4SWG32J4lXT7tGVm4c5fPvvaVOe3VNQuGO7okqLUM6XA55oFb8F5dQnShmnucIvIsi5LU-Kr0yaOMnfdQdfQ2FTEujRBxdwkC8opidR5GqKx3HtWcmZ9kB5TSDptsCTnvKfvioN72xYnHesEVlDAgZV51W-IqDAbtZ4QsMaa4i0uWZbVwkZu-Ca-spkH1c0cS83_bx48VKgPjZijlnPuMjA2vlJxQLdWrdz-MwHq1ZAUkCaMGBHSelY77Gv12LwnKl3y0XKgWJoCF2TdGgV_eXWB3XZSvf98xmW9oIeBbHPAfd8cOfZYVBAGwkhqE-Tta7doUAFhO5__wNNUweHOl2V2KdiQ4muUl9Vit2EdgyZHVvCZKf5yWqHu8-yZUasETjDCD51-BZv_l2RaGAWNXPsYdHNQx7lvIvVt6GcNWfrghRC8SGylwiYPuPakrfjg2rXuS2I3bWHycTQDB0Yrnvfqcp4gXfNqCVa3EG0ze_7byLiusl7kaBOALnPpTwwkO9yCzDTsjTF20lmIpd4_zJGxHwMRXxzMB-wbijSILbl9GrCDIsFnapRUc7emiuHJxzV1VTBjdcG1DEQsZdgQJkWwWXxMr-IgWsQ01zlTSrSp72bh5GClGwXPgANNTAnYw7d45kLGYFKPeDI2l4UHpkPNrSboC7Wz3zTjRvAeJuJMF8OiwaRkQK3NaDYQsT4_39II03VGFoT4U9ax9GSx-yhcLtetlM2JwPN1H9WYgUtaCFIxvWgBFmrP54xTMz9mCP69oCwjYHMkIqVrajgs7orUkUhzwXSXbuZLtplgMjMwkLTs5UAwbtJ6K2bfjJQwFqW0RwSIz_5k9yGQBfOzptA41gOMm0ThqXpbHvEkosFh78TrY0d_2xI6AZZwLS5UBpJ-eDPKQ4-6Raq7HC9yAh7pDxcCe00gDko4rZYd-Q3luRCUKRkfumtuCNSas7kwvGNwFYnOsAVz-_kxNbQanotz80rTiruBwRwZUVOdHTcyQfEHHYmVfDxe_9N3JStgtt1_EIT1dC3yAL774nfvhuahmGkK9vVALOmwy8InqwfSTdvjnsU0y_HiQGWDT73BPwDZldlBJxwDwWeLx7ttGrxKIXIImxnXjxUDuKG1ghOW5S_OI18rSmmqIec_vJZvGW8LYQPvvbF4XzO3JMufIoRjuIhXWfVOBxsTy2rzpgGKSmMf7svjGq-hXTW2ydozRJRQP0_X3tuvj_Gyg6-U4p2mrNwBMRKTEwiRZKMAelE7OHebP8iz5mimbrEPIs4fTz8oG_vPzaYwE6wT88F1dqbupuBMWbIiKc8PqO8jjzXuN9jop6jUk7IrZaieji6bTeVh4d5Do4-hq9JvaRrdzwmiEsQ5XpjBiiUAWJdSFsjy2dDAUoFVMbdKE6fRB9URhi-NLRQmqbdx7KRX7kfvDSW44hsYpOI_WgfZWLrJ_ezv1I80I0KYwlMlS46OBCWIk8OodZA1ZqLODDi7ziIevrUm70rmjW-oB8pMFOabIfq8Xq2YakukANf7dfPaDd7N-yPBTTeStJInwcOVpBpTpTgQAhDhpsTjkvjNKliJaNHDKNNnOKz3hPGIORhznef67tGMVmbZOy_lLRAyvyRVc9oGCorF2BNoB9APWuPqtMXfYVn-oSkd4nuC3qN41Ydi9j2tZNnIOAy-Ma7fqhPwqh6ild0EDklOuU7EiXyhqj41wJ4ePcSGTtI71baRzh0Wk_agU3eXKBDhFQYN9W1ebB10tgWs46DWKC87Aq78IaAS2N4q6wdBKqTkHXicCsIis9CAsWMghz20hdo2j1VyRhhdu5mAUW2vJ0dZuG7rzphVbzWJLxCX7J9Tywzb_ZTP6yVt6Q2Ur8dn98GKQynHkAaLnCRaBjn0UCoWiC5-raDYTkc7tukx9Usb6lCypIJUqGj_LykCXzy5q5TIp4_eAGLHQKR1V7_lLRh1IZygAwhAfifK77NxHChCtH_gJfsLhmYg5sFmerNZ-pEGzRFDzQnNM_ZGHuxIuW9ID7wuM7SxtOdGKamnPsYXOPaz9pZ5epWFZU21fSqXeK7cQXeLsRFarqZ004d87fhX2jZWLQkp_FjihfuUhkI4MA96QxPtO87DYJRDrMpZg8GwfbEEzZ9a7o8z-wtxrGWQlAUuzC5ZHZNNzu1djZIcyHZbBwCxhENuaE-VJ5JiN8lxGxpMoAln2tpvi61YuE4F0v1D4%3AWKiU1-bLKoazYcek%3A9mp6Kq-1CIL3DmCrVuc_Xg.gIbtozsDjCUhGIFoQ9GSCAN0C92N3b3HaY8q90cfOzo",
     "id": 4
-},
-{
+  },
+  {
     "domain": ".muse.ai",
     "expirationDate": 1794862591,
     "hostOnly": false,
     "httpOnly": true,
     "name": "hatch_sess",
     "path": "/",
-    "sameSite": "lax",
+    "sameSite": "Lax",
     "secure": true,
     "session": false,
     "storeId": "0",
     "value": "f366f0a4-7a20-4066-9c7f-af377bfd087e.v1%3AUAOzj4iJM4I9ScH8HBssTkIlcjM7uH05PGpYsAvQfVXEuifS6EavuHUThEjZxyfplCr4CMlOVilM_pTvbdd0m1S-6uXutl_SIbRZtWlaZd9tavtkKz8ilEpWTeqWyrZ0zLIlnRWM6-F2kni6KJu87fGXoFaWCDhw6buvmiOgNlbjAIp6qKXaNSGewe0GAGfUIx7UiCqleWQgsm65-Ludck-T0hVY9ad45sCva_5zLktAzrb42RiZohcuoerHSXSSURR6edar3LZU2o37gP-nETY3-IOqT7OCNDdk60DSkDIsHUkazAXEMDgRCV7bF3yWfumJJjuU2lA_XpH8YcGtqs0DmWIQcHOmc1ctnmGLV0BeUv4Btt-OqcmyzBwI7D0re5enE-ezkbwwe9QOvq55G2R5Dlv9txVAjfIy_l5UeZPcVwzO4V6XvZnnuuvmrvXRyQZ6ygpq0S7W2OTt98CAu5zz%3A7EPGeW3FYmfEV_NU%3A3Tq-igSUNQVoH2-xa7Yk_w.QVsac9cRN7ocGWRenRqm1hwV79zqMUKC9uTdKrR3Rp8",
     "id": 5
-},
-{
+  },
+  {
     "domain": ".muse.ai",
     "expirationDate": 1792444791,
     "hostOnly": false,
     "httpOnly": true,
     "name": "hatch_vml",
     "path": "/",
-    "sameSite": "lax",
+    "sameSite": "Lax",
     "secure": true,
     "session": false,
     "storeId": "0",
     "value": "v1%3AJuIjdzwM3uyrJjIwUS-FgUzAy_kruBi2LPwojYJnTBn_EOILM0b-folGdJZkMGhh4SSh1V9_h-sMn6K5vfyk0B7LPsOGZjBaw2TMy0PDy5-JaPpYaZjCiVlTCmujNygIZ0VuXbw6Re1a-B2Kh_t4rG3VoKHKbZxQliUUqJ38PYH2JL7rE_Fw8PNE35giKiNgPCoOugIq5Yg-orSZ1PY3NWXh9iURYdY4XlcoESBunH3iFRX6Y596svkgSulpB01JSSgRw7JU0D3Euq9ppI19aNtB8DckrxD2UhkKu0SSgYtYHXUE_fG8KpX9DIhLFg2L2Vyw5ru0srGAB3UteBMEUEHIhEXYoJBJ4V-AS6sE5QA7xhkHsFexrUA75w-Fq9KkUlcDYNSzjQSMUKLriXFSK3bstFEGgsOrwVqvjn8pPKTD7M2MwhIaLvZoC-thB4sZkeWEbj4zxn8tfxQU72AKkzoq-Gv1vkllWY7yeqgYvp3LQN87Z9Bi2VeywKK6gwyIvNV119r-K6lAGdDEPAAiM3m8tGm_XePOrVr5W1W-66WPp8fCYXOIKBMBSjvm_PLC88yAijotXZWofyB4c2WCq0oBpfmf-FnIjr1eCWyb7oj2AQ0hovIiDGvq35FocTjR7NVZ8Tsx8BkxQ4Rhyil57J4DeEiudA_vPTZGNRJQggn_O0A0uH46TUVZlavR5_6lXUZdXDBwh7wQYgKL2TutfFtbIdavaHzZh4ohdUPgqUns7w2Xci4KBQv6uy5ps7zawV25O-a64DcLZmzLmne2Um6Tn0QsS__ltDl-zaYQCiqi1S2D3NnMRppOZ8zLl5CXLuE1KPRXvWARIIRgLBNd9-SDh97LA_-a05XF8HAlQf64FTfF0i8L4mjCj0U6V6v01XtZAUhoAgsUwF1qS8JprChXdC5KLJDuRWs_OBlR3lVvh95ZQCKvRv0byK6ZQdGtdOSmlReFPDTjvmCMSoaWjW4dtrkCTYXhultGRYrzfHMflD-8_prDuSqibUjC_6yOR3YkDWHbm48yc40HYB2QVCHL9mrmwTUxeQT2lVXLeJFzJVfF519QR1CtVkTVfXrakC-LXc1FLobQZ4lGB9cgQFHpoj_CgXkyo3gEL3DZpI-W05Q4CAs0YMCl5OifxEY4nbBcu7npauQlkyLbX5b-PsjdTbtLZFknKMPP2LwAfFRdssSs3YVKQusp9yC-FMr629FL7Ezeh6LmOuNXQ02R01TD7Lz7gHZXbL6V_cnFEOfmDX9wn39Qm9sjspzVL9vuhxyigaxvM8U6otYtceA1m6KwqFHlQX0tNvVVjYXru5s9pomrXqSGqki0ILJA7hOfQbe0jKn_pRB0u1Q3p_HTuZ1Z8qFJeNRVi6aWQcPNfBh9ZhC_kXgm0fZU2kFuz8eca_QFJZSoNmK3-Q-UA-tx6Lnkd1x2fjM5GuD1YqKpG5_rDtwTnEY8KhWBjO0bdM1vHBub51DMYc1r4B9Dh-oD6ffDXdBOiXCJJulLg_0kSxM5TCftrGamX6GCIbsAM_zM-9ffWg4_ROfl8QyRtT4cwKLpk_G3vPAZA3o4ERJWvkt68mpHXzQm-CDOo6hNQzl82NyPkfIdVwk7Hz4RgpuwUq1xnae1VWSRz1ybbP17eRVGubII--KoWOndxUh3GCztAoQ1NH_Jd6mIL1cMCBGqk4MyUhPp-e4at6IRhUKAxI8gDv3npQhd1uU0cxLWZwo2MqNJFRE1E7bBrcBSaeTlu_zVEQyqFxJk-LZDLb-ZcOTlJ2MyG_We5igXwlgRuK1vh5ecQCfTGW93-5lNvH8OlKBDdwP1twrw08x7adpk_GKgk-KEPR7ybqh6HVMqf9lUrWeUMtobrWQd3m4biAJA_o5Jkn1pTegHHR_IItkROmA8fmMc9dw-9wq1cmmyJJn3eYsYLPqV6h05aF2n6QYYY_pT9Exg8EYXg60hkc47i2GN0uLEE2ECSp_jdt1Vr7itC1qaDQf99mDDZt_AJnUGeM9y_O_BLEBj8XJGNh9Y3xGZNhUPKiRc0Nz49ZPq1X0prP0HMzTUsH9TL8KVgzz8srD_RgyvRsMtaxBk5gqUVqjdeQFvwswdvJqghBRa-Hz6MadcydGshSWlt9FIwOvlCMkzmyxs-PQROYA2S0w_430-6soDLAHG8vvwjX9GdSOD2MT_76PYjCtzA3TimbcWT5tW5w1BFg9IQSISKq5MzWE5PvrBNZqVaREOzFSMF0lkniVTB4U-glH3yo8_C8g5pDV6Ctpi3UeK9-jfgn8gZeS7lJCyXyc3kapoFzv-mSCAhSER1jlTpIwoie43C1NY8zX0bYVWafq8a2kymAui_Dk2Pyy2rsze6G-Nozrx2S6Tq4dlsKm-ONLYnNyckMP3g9VR7Qla8AUJKJfbL88rtbSrsJ4UCQX7Nz8yzJ73bur8LjRmG82EmqNgL9412Uc3ooSkJqs%3AjqxUVap9uHrHMXYI%3AHLtVj8xHfRuUj54wu2fPOw.4Wtgw-vPBioghymDv3Xhodtvmop0A5GJbgQy1jKZPUQ",
     "id": 6
-},
-{
+  },
+  {
     "domain": ".muse.ai",
     "expirationDate": 1823797362,
     "hostOnly": false,
     "httpOnly": false,
     "name": "layout_state",
     "path": "/",
-    "sameSite": "unspecified",
+    "sameSite": "Lax",
     "secure": true,
     "session": false,
     "storeId": "0",
     "value": "%7B%22version%22%3A2%2C%22sideChatsPanelWidth%22%3A240%2C%22fullChatStatusPanelOpen%22%3Afalse%2C%22libraryArtifactsView%22%3A%22grid%22%2C%22librarySearchView%22%3A%22grid%22%2C%22goalsFirstSection%22%3A%22tracking%22%2C%22goalsOrder%22%3A%22manual%22%2C%22goalsShowSubtitles%22%3Atrue%2C%22sideChatsChannelsExpanded%22%3Atrue%2C%22sideChatsExpanded%22%3Atrue%2C%22sideChatsByUser%22%3A%5B%5B%22HxgEXUaYRg6cXNVQjWaEjooDAzyi8pLqY4cpc6FOaTg%22%2Ctrue%2Ctrue%2Cfalse%2Cfalse%5D%5D%7D",
     "id": 7
-},
-{
+  },
+  {
     "domain": ".muse.ai",
     "expirationDate": 1823563307,
     "hostOnly": false,
     "httpOnly": false,
     "name": "theme",
     "path": "/",
-    "sameSite": "unspecified",
+    "sameSite": "Lax",
     "secure": true,
     "session": false,
     "storeId": "0",
     "value": "%7B%22chatThemeCache%22%3A%7B%22v%22%3A1%2C%22t%22%3A%222r%3A1f93qz8%3Ao96kgy%22%2C%22i%22%3A%22avatar%22%2C%22l%22%3A%5B%22%23111112%22%2C%22%23ACB3B6%22%2C%22%23111112%22%2C%22%23FFFFFF%22%2C%22%23EAECED%22%5D%2C%22d%22%3A%5B%22%23FFFFFF%22%2C%22%230C1920%22%2C%22%23FFFFFF%22%2C%22%2326282A%22%2C%22%23181819%22%5D%7D%7D",
     "id": 8
-},
-{
+  },
+  {
     "domain": ".muse.ai",
     "expirationDate": 1792871571,
     "hostOnly": false,
     "httpOnly": false,
     "name": "wd",
     "path": "/",
-    "sameSite": "unspecified",
+    "sameSite": "Lax",
     "secure": true,
     "session": false,
     "storeId": "0",
     "value": "1920x953",
     "id": 9
-},
-{
+  },
+  {
     "domain": "muse.ai",
     "expirationDate": 1799764320,
     "hostOnly": true,
     "httpOnly": true,
     "name": "__Host-hatch_one_tap",
     "path": "/",
-    "sameSite": "strict",
+    "sameSite": "Strict",
     "secure": true,
     "session": false,
     "storeId": "0",
     "value": "v1%3AX_xpDq5KNppfjo4nNib7CRYJzQ7_Uwy_uIfhBdVYPzcET41qQAjBbjINGrAiOznt4K87__Gpl5Nc59oIeDXd57LgzZP-H72FSyCfW0N5ncGJV3hMWPsAn2H0vRDu9zn0OmRfAJ7tq1hWVyizQG-HcYQLzb_TSt5tf-ExOI67EzuRqlKJNyNjHdbx7GQ3pX_zdGED-X0MAIM2O4japu8XgAi8xiL0WGwpMZODoJFmrnJNjTVNag%3AiHfUFA_jUG0wUmmJ%3A0BmWWjWdEPDgsqfpQyxsng",
     "id": 10
-},
-{
+  },
+  {
     "domain": "muse.ai",
     "hostOnly": true,
     "httpOnly": true,
     "name": "hatch_native_auth_device",
     "path": "/",
-    "sameSite": "strict",
+    "sameSite": "Strict",
     "secure": true,
     "session": true,
     "storeId": "0",
     "value": "v1%3Ao7AYesx69tlS5EwWz8Dg0XtleL7ilRt2Jmw5_VyTq-RtBa_epNgQWZefNw%3ArrYgDaHPE26leUMh%3ACthuvhDswVlx4YAAboYD-Q",
     "id": 11
-}
+  }
 ]
