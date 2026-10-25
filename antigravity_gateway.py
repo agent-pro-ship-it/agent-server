@@ -130,6 +130,8 @@ SSL_CTX = ssl.create_default_context()
 SSL_CTX.check_hostname = False
 SSL_CTX.verify_mode = ssl.CERT_NONE
 
+from account_manager import get_account_manager
+
 token_cache = {
     "access_token": None,
     "expires_at": 0
@@ -137,9 +139,27 @@ token_cache = {
 
 
 def get_active_access_token() -> str:
+    # 1. Try to get token from AccountManager's active or ready account
+    try:
+        account_mgr = get_account_manager()
+        if account_mgr:
+            active_acc = account_mgr.get_active_account()
+            if active_acc:
+                tok = account_mgr.get_access_token_for_account(active_acc, OAUTH_CLIENT_ID, OAUTH_CLIENT_SECRET)
+                if tok:
+                    return tok
+    except Exception as e:
+        logger.warning("AccountManager active token lookup notice: %s", e)
+
+    # 2. Fallback to token_cache / OAUTH_REFRESH_TOKEN
     now = time.time()
     if token_cache["access_token"] and now < (token_cache["expires_at"] - 60):
         return token_cache["access_token"]
+
+    if not OAUTH_REFRESH_TOKEN:
+        if token_cache["access_token"]:
+            return token_cache["access_token"]
+        raise RuntimeError("No Antigravity Pro OAuth credentials configured")
 
     data = urllib.parse.urlencode({
         "client_id": OAUTH_CLIENT_ID,
@@ -725,68 +745,95 @@ def execute_via_antigravity_engine(req_data: dict, requested_model: str) -> Opti
 
 def call_gemini_backend(gemini_payload: dict, requested_model: Optional[str] = None):
     last_error = None
-    access_token = None
-    try:
-        access_token = get_active_access_token()
-    except Exception as te:
-        logger.warning("OAuth token notice: %s", te)
+    account_mgr = get_account_manager()
 
-    if not access_token:
-        raise RuntimeError("No active Antigravity Pro OAuth token available")
+    # Get all ready accounts from pool
+    pool = account_mgr.get_ready_accounts() if account_mgr else []
+    if not pool and account_mgr and account_mgr.accounts:
+        pool = account_mgr.accounts
 
-    models_to_try = [
-        "gemini-3.8-flash-high",
-        "gemini-3.8-flash-medium",
-        "gemini-pro-agent",
-        "gemini-3.5-flash-lite"
-    ]
-    if requested_model:
-        rm = requested_model.lower()
-        if "pro" in rm:
-            models_to_try = ["gemini-pro-agent", "gemini-3.8-flash-high", "gemini-3.8-flash-medium"]
-        elif "lite" in rm:
-            models_to_try = ["gemini-3.5-flash-lite", "gemini-3.8-flash-medium"]
+    max_account_attempts = max(1, len(pool))
 
-    url = "https://daily-cloudcode-pa.googleapis.com/v1internal:generateContent"
-    headers = {
-        "Authorization": f"Bearer {access_token}",
-        "Content-Type": "application/json",
-        "User-Agent": "antigravity/2.19.1"
-    }
+    for acc_idx in range(max_account_attempts):
+        current_account = pool[acc_idx] if pool else None
+        access_token = None
 
-    for model_name in models_to_try:
-        envelope = {
-            "project": "aicode-consumers",
-            "model": model_name,
-            "requestId": str(uuid.uuid4()),
-            "request": gemini_payload
-        }
-        data_bytes = json.dumps(envelope).encode("utf-8")
-        req = urllib.request.Request(url, data=data_bytes, headers=headers, method="POST")
-        try:
-            with urllib.request.urlopen(req, context=SSL_CTX, timeout=35) as resp:
-                resp_json = json.loads(resp.read().decode("utf-8"))
-                actual_resp = resp_json.get("response", resp_json)
-                return actual_resp, model_name
-        except urllib.error.HTTPError as he:
-            err_body = ""
+        if current_account and account_mgr:
+            access_token = account_mgr.get_access_token_for_account(current_account, OAUTH_CLIENT_ID, OAUTH_CLIENT_SECRET)
+
+        if not access_token:
             try:
-                err_body = he.read().decode("utf-8")
-            except Exception:
-                pass
-            logger.warning(f"Antigravity model {model_name} HTTP {he.code}: {err_body[:200]}")
-            last_error = RuntimeError(f"HTTP {he.code} from {model_name}: {err_body[:300]}")
-            if he.code == 400:
-                raise last_error
+                access_token = get_active_access_token()
+            except Exception as te:
+                logger.warning("OAuth token notice: %s", te)
+
+        if not access_token:
             continue
-        except Exception as e:
-            logger.warning(f"Antigravity model {model_name} error: {e}")
-            last_error = e
-            continue
+
+        models_to_try = [
+            "gemini-3.8-flash-high",
+            "gemini-3.8-flash-medium",
+            "gemini-pro-agent",
+            "gemini-3.5-flash-lite"
+        ]
+        if requested_model:
+            rm = requested_model.lower()
+            if "pro" in rm:
+                models_to_try = ["gemini-pro-agent", "gemini-3.8-flash-high", "gemini-3.8-flash-medium"]
+            elif "lite" in rm:
+                models_to_try = ["gemini-3.5-flash-lite", "gemini-3.8-flash-medium"]
+
+        url = "https://daily-cloudcode-pa.googleapis.com/v1internal:generateContent"
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json",
+            "User-Agent": "antigravity/2.19.1"
+        }
+
+        quota_exhausted_on_account = False
+        for model_name in models_to_try:
+            envelope = {
+                "project": "aicode-consumers",
+                "model": model_name,
+                "requestId": str(uuid.uuid4()),
+                "request": gemini_payload
+            }
+            data_bytes = json.dumps(envelope).encode("utf-8")
+            req = urllib.request.Request(url, data=data_bytes, headers=headers, method="POST")
+            try:
+                with urllib.request.urlopen(req, context=SSL_CTX, timeout=35) as resp:
+                    resp_json = json.loads(resp.read().decode("utf-8"))
+                    actual_resp = resp_json.get("response", resp_json)
+                    return actual_resp, model_name
+            except urllib.error.HTTPError as he:
+                err_body = ""
+                try:
+                    err_body = he.read().decode("utf-8")
+                except Exception:
+                    pass
+                logger.warning(f"Antigravity model {model_name} HTTP {he.code}: {err_body[:200]}")
+                last_error = RuntimeError(f"HTTP {he.code} from {model_name}: {err_body[:300]}")
+                if he.code == 400:
+                    raise last_error
+                if he.code == 429 or "RESOURCE_EXHAUSTED" in err_body or "quota" in err_body.lower():
+                    logger.warning(f"Account {current_account.get('email') if current_account else 'default'} hit quota limit (HTTP 429). Auto-failing over...")
+                    quota_exhausted_on_account = True
+                    if current_account and account_mgr:
+                        account_mgr.mark_account_quota_exhausted(current_account["id"])
+                    break  # Break model loop and switch to next account in pool!
+                continue
+            except Exception as e:
+                logger.warning(f"Antigravity model {model_name} error: {e}")
+                last_error = e
+                continue
+
+        if not quota_exhausted_on_account:
+            # If not quota exhausted, request error might be format/model-related
+            pass
 
     if last_error:
         raise last_error
-    raise RuntimeError("All Antigravity models failed")
+    raise RuntimeError("All Antigravity accounts and models failed")
 
 
 

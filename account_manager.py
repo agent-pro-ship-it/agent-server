@@ -1,9 +1,12 @@
 import os
 import json
+import time
 import logging
 import base64
+import urllib.request
+import urllib.parse
 from pathlib import Path
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional, Any, Tuple
 from datetime import datetime
 
 logger = logging.getLogger("AccountManager")
@@ -21,6 +24,7 @@ class AccountManager:
         self.accounts_file = workspace_dir / "accounts.json"
         self.accounts: List[Dict[str, Any]] = []
         self.active_account_id: Optional[str] = None
+        self._current_rr_index: int = 0
 
     def initialize(self):
         """Loads accounts from local disk or Storj S3, then ensures active token is installed."""
@@ -65,7 +69,7 @@ class AccountManager:
             if p.exists() and p.stat().st_size > 50:
                 try:
                     tok = json.loads(p.read_text(encoding="utf-8"))
-                    email = self._extract_email_from_token(tok) or "recruiterclub.bot@gmail.com"
+                    email = self._extract_email_from_token(tok) or tok.get("account") or "recruiterclub.bot@gmail.com"
                     return {
                         "id": "acc-recruiterclub",
                         "email": email,
@@ -91,6 +95,8 @@ class AccountManager:
             self.active_account_id = self.accounts[0]["id"]
 
     def _extract_email_from_token(self, token_data: Dict[str, Any]) -> Optional[str]:
+        if token_data.get("account"):
+            return token_data["account"]
         id_tok = token_data.get("id_token")
         if id_tok and "." in id_tok:
             try:
@@ -106,6 +112,7 @@ class AccountManager:
 
     def _save_local_accounts(self):
         try:
+            self.workspace_dir.mkdir(parents=True, exist_ok=True)
             self.accounts_file.write_text(json.dumps(self.accounts, ensure_ascii=False, indent=2), encoding="utf-8")
         except Exception as e:
             logger.error(f"Failed to write local accounts.json: {e}")
@@ -158,6 +165,7 @@ class AccountManager:
                 logger.warning(f"Could not write token to {p}: {e}")
 
     def get_accounts_safe(self) -> List[Dict[str, Any]]:
+        self._check_cooldowns()
         safe_list = []
         for acc in self.accounts:
             safe_list.append({
@@ -172,9 +180,34 @@ class AccountManager:
             })
         return safe_list
 
-    def get_active_account(self) -> Optional[Dict[str, Any]]:
+    def _check_cooldowns(self):
+        now = time.time()
+        changed = False
         for acc in self.accounts:
-            if acc.get("id") == self.active_account_id or acc.get("active"):
+            if acc.get("status") == "quota_exhausted":
+                exhausted_at = acc.get("exhausted_at", 0)
+                if now - exhausted_at > 180:  # 3 minutes cooldown
+                    acc["status"] = "ready"
+                    changed = True
+                    logger.info(f"Quota cooldown ended for account {acc.get('email')}, status restored to ready.")
+        if changed:
+            self._save_local_accounts()
+
+    def get_ready_accounts(self) -> List[Dict[str, Any]]:
+        self._check_cooldowns()
+        ready = [a for a in self.accounts if a.get("status") == "ready"]
+        if not ready and self.accounts:
+            # If all are exhausted, fallback to all accounts to allow soft retry
+            return self.accounts
+        return ready
+
+    def get_active_account(self) -> Optional[Dict[str, Any]]:
+        self._check_cooldowns()
+        for acc in self.accounts:
+            if acc.get("id") == self.active_account_id:
+                return acc
+        for acc in self.accounts:
+            if acc.get("active"):
                 return acc
         return self.accounts[0] if self.accounts else None
 
@@ -183,7 +216,8 @@ class AccountManager:
         for acc in self.accounts:
             if acc.get("id") == account_id:
                 acc["active"] = True
-                acc["status"] = "ready"
+                if acc.get("status") != "quota_exhausted":
+                    acc["status"] = "ready"
                 target = acc
             else:
                 acc["active"] = False
@@ -207,19 +241,77 @@ class AccountManager:
             }
         }
 
+    def mark_account_quota_exhausted(self, account_id: str):
+        for acc in self.accounts:
+            if acc.get("id") == account_id:
+                acc["status"] = "quota_exhausted"
+                acc["exhausted_at"] = time.time()
+                logger.warning(f"Account {acc.get('email')} ({acc.get('id')}) marked as quota_exhausted.")
+                break
+        self._save_local_accounts()
+        self._sync_to_storj()
+
+    def auto_failover_quota(self, failed_account_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        if failed_account_id:
+            self.mark_account_quota_exhausted(failed_account_id)
+        ready_acc = next((a for a in self.accounts if a.get("status") == "ready" and a.get("id") != failed_account_id), None)
+        if ready_acc:
+            logger.info(f"Auto-failing over quota to {ready_acc.get('email')}")
+            self.switch_account(ready_acc["id"])
+            return ready_acc
+        return None
+
+    def get_access_token_for_account(self, account: Dict[str, Any], client_id: str, client_secret: str) -> Optional[str]:
+        now = time.time()
+        # 1. Check in-memory cached token
+        if account.get("cached_access_token") and now < (account.get("token_expires_at", 0) - 60):
+            return account["cached_access_token"]
+
+        # 2. Extract refresh_token
+        tok_data = account.get("token_data", {})
+        token_info = tok_data.get("token", {}) if isinstance(tok_data.get("token"), dict) else tok_data
+        refresh_tok = token_info.get("refresh_token") or tok_data.get("refresh_token")
+        
+        if not refresh_tok:
+            logger.warning(f"No refresh_token found for account {account.get('email')}")
+            return None
+
+        # 3. Request fresh access token from Google
+        data = urllib.parse.urlencode({
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "refresh_token": refresh_tok,
+            "grant_type": "refresh_token"
+        }).encode("utf-8")
+
+        req = urllib.request.Request("https://oauth2.googleapis.com/token", data=data, method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=15) as r:
+                res = json.loads(r.read().decode("utf-8"))
+                new_token = res.get("access_token")
+                expires_in = res.get("expires_in", 3600)
+                account["cached_access_token"] = new_token
+                account["token_expires_at"] = now + expires_in
+                return new_token
+        except Exception as e:
+            logger.error(f"Error refreshing access token for {account.get('email')}: {e}")
+            return None
+
     def add_account(self, token_data: Dict[str, Any], custom_email: Optional[str] = None) -> Dict[str, Any]:
-        email = custom_email or self._extract_email_from_token(token_data) or f"account_{len(self.accounts)+1}@google.com"
+        email = custom_email or self._extract_email_from_token(token_data) or token_data.get("account") or f"account_{len(self.accounts)+1}@google.com"
         acc_id = f"acc-{abs(hash(email)) % 1000000}"
 
         existing = next((a for a in self.accounts if a.get("email") == email or a.get("id") == acc_id), None)
         if existing:
             existing["token_data"] = token_data
-            existing["active"] = True
             existing["status"] = "ready"
+            existing["cached_access_token"] = None  # Force refresh
             self.active_account_id = existing["id"]
+            existing["active"] = True
             for a in self.accounts:
                 if a["id"] != existing["id"]:
                     a["active"] = False
+            logger.info(f"Updated existing Google account in pool: {email}")
         else:
             new_acc = {
                 "id": acc_id,
@@ -236,6 +328,7 @@ class AccountManager:
                 a["active"] = False
             self.accounts.append(new_acc)
             self.active_account_id = new_acc["id"]
+            logger.info(f"Added new Google account to pool: {email}")
 
         self.install_token_to_system(token_data)
         self._save_local_accounts()
@@ -261,12 +354,16 @@ class AccountManager:
                 pass
         return {"success": True}
 
-    def auto_failover_quota(self) -> Optional[Dict[str, Any]]:
-        active = self.get_active_account()
-        if active:
-            active["status"] = "quota_exhausted"
-        ready_acc = next((a for a in self.accounts if a.get("status") == "ready" and not a.get("active")), None)
-        if ready_acc:
-            logger.info(f"Auto-failing over to {ready_acc.get('email')}")
-            return self.switch_account(ready_acc["id"])
-        return None
+
+# Module-level singleton
+_instance: Optional[AccountManager] = None
+
+def get_account_manager(workspace_dir: Optional[Path] = None, s3_client=None, bucket_name: str = "agent-vault") -> AccountManager:
+    global _instance
+    if _instance is None:
+        ws = workspace_dir or Path("workspace")
+        _instance = AccountManager(workspace_dir=ws, s3_client=s3_client, bucket_name=bucket_name)
+    elif s3_client and not _instance.s3_client:
+        _instance.s3_client = s3_client
+        _instance.bucket_name = bucket_name
+    return _instance

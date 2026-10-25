@@ -71,8 +71,8 @@ try:
 except Exception as e:
     logger.error(f"Storj S3 connection warning: {e}")
 
-from account_manager import AccountManager
-account_manager = AccountManager(workspace_dir=WORKSPACE_DIR, s3_client=s3_client, bucket_name=STORJ_BUCKET)
+from account_manager import get_account_manager, AccountManager
+account_manager = get_account_manager(workspace_dir=WORKSPACE_DIR, s3_client=s3_client, bucket_name=STORJ_BUCKET)
 try:
     account_manager.initialize()
 except Exception as e:
@@ -2038,76 +2038,101 @@ TERMINAL_PAGE_HTML = """<!DOCTYPE html>
 auth_process = None
 auth_url_cache = None
 
+GOOGLE_OAUTH_CLIENT_ID = os.getenv("ANTIGRAVITY_CLIENT_ID", "")
+GOOGLE_OAUTH_CLIENT_SECRET = os.getenv("ANTIGRAVITY_CLIENT_SECRET", "")
+GOOGLE_OAUTH_REDIRECT_URI = "http://localhost:8085"
+
 @app.get("/api/antigravity/oauth-url")
+@app.get("/api/auth/google/url")
 def get_oauth_url():
-    global auth_process, auth_url_cache
-    import time
-    import re
-    import select
-
-    if auth_process and auth_process.poll() is None and auth_url_cache:
-        return {"status": "ready", "url": auth_url_cache}
-
-    if auth_process and auth_process.poll() is None:
-        try:
-            auth_process.kill()
-        except Exception:
-            pass
-
-    auth_process = subprocess.Popen(
-        ["agy", "-p", "auth_check"],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        bufsize=1
-    )
-
-    auth_url_cache = None
-    start = time.time()
-    while time.time() - start < 10:
-        r, _, _ = select.select([auth_process.stderr], [], [], 0.3)
-        if r:
-            line = auth_process.stderr.readline()
-            if "https://accounts.google.com/o/oauth2/auth" in line:
-                m = re.search(r'(https://accounts\.google\.com/o/oauth2/auth\S+)', line)
-                if m:
-                    auth_url_cache = m.group(1).strip()
-                    return {"status": "ready", "url": auth_url_cache}
-        if auth_process.poll() is not None:
-            break
-
-    return {"status": "error", "message": "Failed to start auth process"}
+    """Generates Google OAuth URL for frictionless multi-account Antigravity Pro connection."""
+    import urllib.parse
+    params = {
+        "client_id": GOOGLE_OAUTH_CLIENT_ID,
+        "redirect_uri": GOOGLE_OAUTH_REDIRECT_URI,
+        "response_type": "code",
+        "scope": "openid email profile https://www.googleapis.com/auth/cloud-platform",
+        "access_type": "offline",
+        "prompt": "consent"
+    }
+    url = f"https://accounts.google.com/o/oauth2/auth?{urllib.parse.urlencode(params)}"
+    return {"status": "ready", "url": url}
 
 class AuthCodeRequest(BaseModel):
     code: str
 
 @app.post("/api/antigravity/submit-code")
+@app.post("/api/auth/google/exchange")
 def submit_auth_code(req: AuthCodeRequest):
-    global auth_process, auth_url_cache
-    if not auth_process or auth_process.poll() is not None:
-        return {"success": False, "error": "Сессия авторизации истекла. Нажмите '1. Войти через Google Pro' еще раз."}
+    """Exchanges Google OAuth code for tokens and registers into the multi-account pool."""
+    import urllib.request
+    import urllib.parse
+    import json
+    import re
+    import time
 
+    raw_code = req.code.strip()
+    if not raw_code:
+        return {"success": False, "error": "Код авторизации не может быть пустым."}
+
+    # Extract code if user pasted the full redirect URL
+    if "code=" in raw_code:
+        m = re.search(r'code=([^&\s]+)', raw_code)
+        if m:
+            raw_code = urllib.parse.unquote(m.group(1))
+
+    # Clean up trailing slashes or hash
+    raw_code = raw_code.split("#")[0].strip()
+
+    data = urllib.parse.urlencode({
+        "client_id": GOOGLE_OAUTH_CLIENT_ID,
+        "client_secret": GOOGLE_OAUTH_CLIENT_SECRET,
+        "code": raw_code,
+        "grant_type": "authorization_code",
+        "redirect_uri": GOOGLE_OAUTH_REDIRECT_URI
+    }).encode("utf-8")
+
+    token_req = urllib.request.Request("https://oauth2.googleapis.com/token", data=data, method="POST")
     try:
-        auth_process.stdin.write(req.code.strip() + "\n")
-        auth_process.stdin.flush()
-        
+        with urllib.request.urlopen(token_req, timeout=15) as resp:
+            token_res = json.loads(resp.read().decode("utf-8"))
+
+        access_tok = token_res.get("access_token")
+        refresh_tok = token_res.get("refresh_token")
+        id_tok = token_res.get("id_token")
+        exp_in = token_res.get("expires_in", 3600)
+
+        if not refresh_tok:
+            logger.warning("Google did not return a refresh_token; prompt=consent was required.")
+
+        tok_data = {
+            "token": {
+                "access_token": access_tok,
+                "token_type": "Bearer",
+                "refresh_token": refresh_tok,
+                "expiry": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + exp_in))
+            },
+            "auth_method": "consumer",
+            "id_token": id_tok
+        }
+
+        res = account_manager.add_account(tok_data)
+        return {
+            "success": True,
+            "message": "Аккаунт успешно подключен и добавлен в мульти-пул!",
+            "active_account": res.get("account"),
+            "accounts": account_manager.get_accounts_safe()
+        }
+    except urllib.error.HTTPError as he:
+        err_msg = ""
         try:
-            stdout, stderr = auth_process.communicate(timeout=10)
-            output = stdout + "\n" + stderr
-            # Automatically parse token and register into AccountManager
-            for p in [Path("/root/.gemini/antigravity-cli/antigravity-oauth-token"), Path.home() / ".gemini" / "antigravity-cli" / "antigravity-oauth-token"]:
-                if p.exists() and p.stat().st_size > 50:
-                    try:
-                        tok_data = json.loads(p.read_text(encoding="utf-8"))
-                        account_manager.add_account(tok_data)
-                        break
-                    except Exception:
-                        pass
-            return {"success": (auth_process.returncode == 0), "output": output, "accounts": account_manager.get_accounts_safe()}
-        except subprocess.TimeoutExpired:
-            return {"success": True, "output": "Код принят, авторизация сохранена!", "accounts": account_manager.get_accounts_safe()}
+            err_msg = he.read().decode("utf-8", errors="ignore")
+        except Exception:
+            pass
+        logger.error(f"Google OAuth code exchange HTTP error {he.code}: {err_msg}")
+        return {"success": False, "error": f"Ошибка обмена кода Google (HTTP {he.code}): {err_msg[:250]}"}
     except Exception as e:
+        logger.error(f"Google OAuth code exchange exception: {e}")
         return {"success": False, "error": str(e)}
 
 @app.get("/terminal", response_class=HTMLResponse)
@@ -2433,3 +2458,4 @@ if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", 10000))
     uvicorn.run("main:app", host="0.0.0.0", port=port, reload=False)
+
