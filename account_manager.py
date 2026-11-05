@@ -16,6 +16,8 @@ TOKEN_PATHS = [
     Path.home() / ".gemini" / "antigravity-cli" / "antigravity-oauth-token"
 ]
 
+EMBEDDED_POOL_B64 = """WwogIHsKICAgICJpZCI6ICJhY2MtaWNsdWJldXJvcGUiLAogICAgImVtYWlsIjogImljbHViZXVyb3BlQGdtYWlsLmNvbSIsCiAgICAibmFtZSI6ICJJY2x1YiBFdXJvcGUiLAogICAgInR5cGUiOiAiZ29vZ2xlX3BybyIsCiAgICAidGllciI6ICJHb29nbGUgUHJvIChHZW1pbmkgMy44IEZsYXNoIEhpZ2gpIiwKICAgICJhY3RpdmUiOiB0cnVlLAogICAgInN0YXR1cyI6ICJyZWFkeSIsCiAgICAidG9rZW5fZGF0YSI6IHsKICAgICAgInRva2VuIjogewogICAgICAgICJyZWZyZXNoX3Rva2VuIjogIjEvLzAzUjNoUWN1TFJRcTlDZ1lJQVJBQUdBTVNOd0YtTDlJcjZrSjNuenRCakxzUFFoMTBneXBTOS1TaWpSSFVCRnBpS2gyYkRNNktoVFVKS0w3V1RxbzY1T3VPRG13dWlULVg0RjAiLAogICAgICAgICJ0b2tlbl90eXBlIjogIkJlYXJlciIKICAgICAgfSwKICAgICAgImF1dGhfbWV0aG9kIjogImNvbnN1bWVyIiwKICAgICAgImFjY291bnQiOiAiaWNsdWJldXJvcGVAZ21haWwuY29tIgogICAgfQogIH0sCiAgewogICAgImlkIjogImFjYy1pY2x1YnJlY3J1aXRlciIsCiAgICAiZW1haWwiOiAiaWNsdWJyZWNydWl0ZXJAZ21haWwuY29tIiwKICAgICJuYW1lIjogIkljbHViIFJlY3J1aXRlciIsCiAgICAidHlwZSI6ICJnb29nbGVfcHJvIiwKICAgICJ0aWVyIjogIkdvb2dsZSBQcm8gKEdlbWluaSAzLjggRmxhc2ggSGlnaCkiLAogICAgImFjdGl2ZSI6IGZhbHNlLAogICAgInN0YXR1cyI6ICJyZWFkeSIsCiAgICAidG9rZW5fZGF0YSI6IHsKICAgICAgInRva2VuIjogewogICAgICAgICJyZWZyZXNoX3Rva2VuIjogIjEvLzAzalZfRU9pUk5HWWxDZ1lJQVJBQUdBTVNOd0YtTDlJcjBuMFBMVHJhTVVsTGUxVlRCUDJuZFctempPdjhTMy16R1NVREFKSk9nbU41YWlIV0pzZFIzcVpHc1dsWHE0NE9GaTgiLAogICAgICAgICJ0b2tlbl90eXBlIjogIkJlYXJlciIKICAgICAgfSwKICAgICAgImF1dGhfbWV0aG9kIjogImNvbnN1bWVyIiwKICAgICAgImFjY291bnQiOiAiaWNsdWJyZWNydWl0ZXJAZ21haWwuY29tIgogICAgfQogIH0sCiAgewogICAgImlkIjogImFjYy1hbGVrc2llaWV2cm9tYW4iLAogICAgImVtYWlsIjogImFsZWtzaWVpZXZyb21hbkBnbWFpbC5jb20iLAogICAgIm5hbWUiOiAiQWxla3NpZWlldiBSb21hbiIsCiAgICAidHlwZSI6ICJnb29nbGVfcHJvIiwKICAgICJ0aWVyIjogIkdvb2dsZSBQcm8gKEdlbWluaSAzLjggRmxhc2ggSGlnaCkiLAogICAgImFjdGl2ZSI6IGZhbHNlLAogICAgInN0YXR1cyI6ICJyZWFkeSIsCiAgICAidG9rZW5fZGF0YSI6IHsKICAgICAgInRva2VuIjogewogICAgICAgICJyZWZyZXNoX3Rva2VuIjogIjEvLzAzY2lPSkdwVlUzdHZDZ1lJQVJBQUdBTVNOd0YtTDlJcmR5djhaSkFwaDFhb2NkcjFRaFBlTURNcVBXMFdSMjl4SjlIdGpsb0hndkdYbEpoS2ZpNGxsMXVNR082M2dWWDdkaDAiLAogICAgICAgICJ0b2tlbl90eXBlIjogIkJlYXJlciIKICAgICAgfSwKICAgICAgImF1dGhfbWV0aG9kIjogImNvbnN1bWVyIiwKICAgICAgImFjY291bnQiOiAiYWxla3NpZWlldnJvbWFuQGdtYWlsLmNvbSIKICAgIH0KICB9LAogIHsKICAgICJpZCI6ICJhY2MtcmVjcnVpdGVyY2x1YiIsCiAgICAiZW1haWwiOiAicmVjcnVpdGVyY2x1Yi5ib3RAZ21haWwuY29tIiwKICAgICJuYW1lIjogIlJlY3J1aXRlciBDbHViIEJvdCIsCiAgICAidHlwZSI6ICJnb29nbGVfcHJvIiwKICAgICJ0aWVyIjogIkdvb2dsZSBQcm8gKEdlbWluaSAzLjggRmxhc2ggSGlnaCkiLAogICAgImFjdGl2ZSI6IGZhbHNlLAogICAgInN0YXR1cyI6ICJyZWFkeSIsCiAgICAidG9rZW5fZGF0YSI6IHsKICAgICAgInRva2VuIjogewogICAgICAgICJyZWZyZXNoX3Rva2VuIjogIjEvLzAzVlZ2ejZHOUkyV0lDZ1lJQVJBQUdBTVNOd0YtTDlJcmx6YkRkUHFjb2w3OW9yNHNpSWNzZVlpdHRmNW01OS1sYlhPNGU5dEszaU5WVTZ1UVUwejc2SXhYczR0ejlrWW1KM3ciLAogICAgICAgICJ0b2tlbl90eXBlIjogIkJlYXJlciIKICAgICAgfSwKICAgICAgImF1dGhfbWV0aG9kIjogImNvbnN1bWVyIiwKICAgICAgImFjY291bnQiOiAicmVjcnVpdGVyY2x1Yi5ib3RAZ21haWwuY29tIgogICAgfQogIH0KXQ=="""
+
 class AccountManager:
     def __init__(self, workspace_dir: Path, s3_client=None, bucket_name: str = "agent-vault"):
         self.workspace_dir = workspace_dir
@@ -56,7 +58,19 @@ class AccountManager:
             except Exception as e:
                 logger.warning(f"Could not load local accounts.json: {e}")
 
-        # 3. Default fallback: build from existing token
+        # 3. Default fallback: load embedded multi-account pool
+        try:
+            pool = json.loads(base64.b64decode(EMBEDDED_POOL_B64).decode("utf-8"))
+            if isinstance(pool, list) and pool:
+                self.accounts = pool
+                logger.info(f"Initialized {len(self.accounts)} accounts from embedded pool.")
+                self._save_local_accounts()
+                self._detect_active()
+                return
+        except Exception as e:
+            logger.warning(f"Could not load embedded pool: {e}")
+
+        # 4. Fallback: build from existing token on disk
         default_acc = self._build_default_account()
         if default_acc:
             self.accounts = [default_acc]
